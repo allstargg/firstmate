@@ -1980,7 +1980,13 @@ fi
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")
-  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home $LAUNCH"
+  # Deliver the primary's EFFECTIVE trace-context decision as a normalized on/off
+  # literal (never the raw FM_TRACE_CONTEXT string) so a FM_TRACE_CONTEXT override
+  # on the primary reaches the secondmate's OWN workers, not just the copied
+  # config/trace-context file: otherwise off would not disable them and on would
+  # not enable them across the launch boundary (bin/fm-trace-context-lib.sh header).
+  if fm_trace_context_enabled "$CONFIG"; then sm_trace_context=on; else sm_trace_context=off; fi
+  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$sm_trace_context $LAUNCH"
 fi
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
