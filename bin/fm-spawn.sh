@@ -137,6 +137,11 @@
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
 # success line and state/<id>.meta omit them.
+# When trace context is enabled (config/trace-context or FM_TRACE_CONTEXT; see
+# docs/configuration.md and bin/fm-trace-context-lib.sh) the meta also records one
+# W3C traceparent= carrier, the same value injected into the pane as TRACEPARENT;
+# the default-off path writes neither, leaving the generated meta and launch
+# environment unchanged.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -193,6 +198,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-trace-context-lib.sh
+. "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1703,6 +1710,15 @@ elif [ "$KIND" = scout ]; then
   YOLO=
 fi
 
+# Resolve the optional default-off W3C trace context (bin/fm-trace-context-lib.sh,
+# docs/configuration.md): the one carrier both recorded in meta and injected into
+# the pane, so an observer reads exactly what the child receives. Empty only when
+# disabled or on entropy/validation failure; malformed or all-zero inherited
+# context is treated as absent and roots a fresh trace. Reuses this task's
+# already-recorded value on relaunch. Never aborts the spawn and adds only the
+# cost of reading a few bytes of entropy.
+SPAWN_TRACEPARENT=$(fm_trace_context_resolve "$CONFIG" "$STATE/$ID.meta" || true)
+
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 {
@@ -1718,6 +1734,9 @@ META_WINDOW=$T
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
+  # Default-off writes no traceparent= line (meta stays byte-identical); when on,
+  # this exact value is also injected into the pane as TRACEPARENT below.
+  [ -z "$SPAWN_TRACEPARENT" ] || echo "traceparent=$SPAWN_TRACEPARENT"
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
   # data/fm-backend-design-d7's P1 compatibility contract).
@@ -1783,6 +1802,10 @@ fi
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+# Same carrier recorded in meta above, sent through the exact channel that already
+# ships GOTMPDIR, so every backend and harness - ship, scout, and secondmate - gets
+# it before launch. Skipped entirely when trace context is off.
+[ -z "$SPAWN_TRACEPARENT" ] || spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"
 sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
