@@ -119,6 +119,78 @@ EOF
 meta_traceparent() { sed -n 's/^traceparent=//p' "$1"; }
 injected_traceparent() { sed -n 's/^export TRACEPARENT=//p' "$1"; }
 
+# Two-level primary -> secondmate -> worker regression for the FM_TRACE_CONTEXT
+# effective override. Drives bin/fm-spawn.sh TWICE against real homes and a real
+# worktree: first the primary launches a secondmate (capturing the exact env the
+# primary injects into it), then that secondmate launches its OWN worker with
+# exactly that inherited env, reading the secondmate home's own inherited config.
+# This is what proves the primary's effective on/off decision - not only the
+# copied config/trace-context file - governs the nested worker, which a
+# single-home spawn test cannot reach. Sets TL_ENV_TC, TL_CARRIER, TL_WORKER_TP,
+# and TL_SM_FILE for the caller.
+#   run_two_level <name> <present|absent primary file> <on|off primary env>
+run_two_level() {
+  local name=$1 pfile=$2 penv=$3
+  local base prim sm sm_id smlog smfake worker_id wproj wwt wlog wfake
+  base="$TMP_ROOT/2level-$name"
+  prim="$base/primary"
+  sm="$base/sm"
+  mkdir -p "$prim/config" "$prim/data" "$prim/state" "$prim/projects"
+  printf 'claude\n' > "$prim/config/crew-harness"
+  [ "$pfile" = present ] && : > "$prim/config/trace-context"
+  touch "$prim/state/.last-watcher-beat"
+
+  # Seed the secondmate home so validate_firstmate_home_for_spawn accepts it.
+  mkdir -p "$sm/bin" "$sm/data"
+  printf '# Firstmate\n' > "$sm/AGENTS.md"
+  printf 'sm-%s\n' "$name" > "$sm/.fm-secondmate-home"
+  printf 'charter\n' > "$sm/data/charter.md"
+
+  # Spawn 1: the primary launches the secondmate; capture what it injects.
+  sm_id="sm-$name"
+  mkdir -p "$prim/data/$sm_id"
+  printf 'charter brief\n' > "$prim/data/$sm_id/brief.md"
+  smlog="$base/sm-launch.log"
+  smfake=$(make_spawn_fakebin "$base/sm-fake")
+  : > "$smlog"
+  env FM_TRACE_CONTEXT="$penv" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$prim" \
+    FM_STATE_OVERRIDE="$prim/state" FM_DATA_OVERRIDE="$prim/data" \
+    FM_PROJECTS_OVERRIDE="$prim/projects" FM_CONFIG_OVERRIDE="$prim/config" \
+    FM_SPAWN_NO_GUARD=1 CLAUDECODE=1 TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$smlog" PATH="$smfake:$PATH" \
+    "$SPAWN" "$sm_id" "$sm" --secondmate >/dev/null 2>&1 || true
+
+  # Extract the EXACT env the primary put on the secondmate: the normalized
+  # FM_TRACE_CONTEXT in the launch prefix, and the TRACEPARENT carrier (if any).
+  TL_ENV_TC=$(grep -o 'FM_TRACE_CONTEXT=[a-z]*' "$smlog" | head -1 | cut -d= -f2)
+  TL_CARRIER=$(injected_traceparent "$smlog" | head -1)
+
+  # Spawn 2: the secondmate launches its own worker with exactly that inherited
+  # env, reading the secondmate home's own (inherited) config.
+  worker_id="w-$name"
+  wproj="$base/wproj"
+  wwt="$base/wwt"
+  fm_git_worktree "$wproj" "$wwt" "wt-$name"
+  mkdir -p "$sm/state" "$sm/projects" "$sm/data/$worker_id"
+  printf 'worker brief\n' > "$sm/data/$worker_id/brief.md"
+  touch "$sm/state/.last-watcher-beat"
+  wlog="$base/worker-launch.log"
+  wfake=$(make_spawn_fakebin "$base/w-fake")
+  : > "$wlog"
+  env FM_TRACE_CONTEXT="$TL_ENV_TC" TRACEPARENT="$TL_CARRIER" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$sm" \
+    FM_STATE_OVERRIDE="$sm/state" FM_DATA_OVERRIDE="$sm/data" \
+    FM_PROJECTS_OVERRIDE="$sm/projects" FM_CONFIG_OVERRIDE="$sm/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wwt" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$wlog" PATH="$wfake:$PATH" \
+    "$SPAWN" "$worker_id" "$wproj" >/dev/null 2>&1 || true
+
+  TL_WORKER_TP=$(meta_traceparent "$sm/state/$worker_id.meta")
+  TL_SM_FILE=absent
+  [ -f "$sm/config/trace-context" ] && TL_SM_FILE=present
+}
+
 test_enabled_records_and_injects_identical_carrier_before_launch() {
   local rec out status meta mtp itp gl tl ll
   rec=$(make_spawn_case tc-on)
@@ -219,9 +291,45 @@ test_env_override_wins_over_file() {
   pass "FM_TRACE_CONTEXT overrides the file both ways: off disables a file-enabled home, on enables a fileless home"
 }
 
+# End-to-end two-level enable path: the primary is enabled by the environment
+# override with NO config file, and that enablement must reach the newly launched
+# secondmate's own worker so the whole chain shares one trace. Before the
+# effective-override fix, the secondmate saw only the (absent) inherited file and
+# left its worker untraced despite receiving the parent carrier.
+test_secondmate_env_on_file_absent_keeps_nested_worker_enabled() {
+  run_two_level enable absent on
+  [ "$TL_ENV_TC" = on ] || fail "the primary must deliver FM_TRACE_CONTEXT=on to the secondmate (got '$TL_ENV_TC')"
+  fm_trace_context_valid "$TL_CARRIER" || fail "an enabled primary must mint a carrier for the secondmate (got '$TL_CARRIER')"
+  fm_trace_context_valid "$TL_WORKER_TP" \
+    || fail "env-on/file-absent must keep the nested worker enabled (got '$TL_WORKER_TP')"
+  [ "${TL_CARRIER:3:32}" = "${TL_WORKER_TP:3:32}" ] \
+    || fail "the nested worker must share the primary trace id (parent='${TL_CARRIER:3:32}' worker='${TL_WORKER_TP:3:32}')"
+  [ "${TL_CARRIER:36:16}" != "${TL_WORKER_TP:36:16}" ] \
+    || fail "the nested worker must mint a fresh span id, not reuse the parent's"
+  pass "two-level: env-on/file-absent keeps the nested worker enabled and in the same trace as the primary"
+}
+
+# End-to-end two-level disable path: the primary is disabled by the environment
+# override while the config file is PRESENT (so it is copied into the secondmate
+# home). The override must still disable the secondmate's own worker, or
+# FM_TRACE_CONTEXT=off is not a real kill switch. Before the fix the copied file
+# re-enabled the nested worker.
+test_secondmate_env_off_file_present_keeps_nested_worker_disabled() {
+  run_two_level disable present off
+  [ "$TL_ENV_TC" = off ] || fail "the primary must deliver FM_TRACE_CONTEXT=off to the secondmate (got '$TL_ENV_TC')"
+  [ -z "$TL_CARRIER" ] || fail "a disabled primary must inject no carrier into the secondmate (got '$TL_CARRIER')"
+  [ "$TL_SM_FILE" = present ] \
+    || fail "the disable case must exercise a copied config/trace-context in the secondmate home (got '$TL_SM_FILE')"
+  [ -z "$TL_WORKER_TP" ] \
+    || fail "env-off must keep the nested worker disabled even with the file present (got '$TL_WORKER_TP')"
+  pass "two-level: env-off/file-present keeps the nested worker disabled even though the config file was copied into the secondmate home"
+}
+
 test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
 test_relaunch_reuses_recorded_carrier
 test_env_override_wins_over_file
+test_secondmate_env_on_file_absent_keeps_nested_worker_enabled
+test_secondmate_env_off_file_present_keeps_nested_worker_disabled
 
 echo "# all fm-trace-context-spawn tests passed"

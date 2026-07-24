@@ -23,7 +23,8 @@ When enabled, for each spawn Firstmate resolves one W3C `traceparent` carrier fo
 `TRACEPARENT` as an environment variable is a Firstmate convention carrying a W3C-formatted value: W3C Trace Context standardizes the `traceparent` HTTP header, not an env var, and OpenTelemetry SDKs do not read it from the environment automatically, so a downstream observer must explicitly read this env value or the `traceparent=` meta field. This feature parents no SDK span by itself.
 
 Because the injected carrier and the recorded carrier are the same string, an observer that reads the metadata reconstructs exactly the identity the child received.
-The injection sits at the unconditional pre-launch export site, so it covers ship, scout, and Secondmate spawns across every spawn backend (`tmux`, `herdr`, `zellij`, `orca`, `cmux`) and is identical across every harness (`claude`, `codex`, `opencode`, `pi`, `grok`) - the same coverage `GOTMPDIR` already has, with no `launch_template()` change.
+The injection sits at the unconditional pre-launch export site, so it covers ship, scout, and Secondmate spawns and is identical across every harness (`claude`, `codex`, `opencode`, `pi`, `grok`) - the same coverage `GOTMPDIR` already has, with no `launch_template()` change.
+Ship and scout spawns reach that site on every spawn backend (`tmux`, `herdr`, `zellij`, `orca`, `cmux`); a Secondmate reaches it on every backend that accepts a Secondmate spawn (`tmux`, `herdr`, `zellij`), because `bin/fm-spawn.sh` rejects a Secondmate on `orca` and `cmux`.
 
 ## Root, child, and recovery semantics
 
@@ -40,7 +41,8 @@ A malformed or all-zero inherited value is treated as absent, so garbage never p
 Trace context is read from a process's environment, which is fixed when that process starts, so enabling the capability affects only agents spawned *after* enablement:
 
 - The primary propagates `config/trace-context` into Secondmate homes (it is in `FM_INHERITABLE_CONFIG`), and `bin/fm-config-push.sh` can push it to already-running homes, but copying the flag into a live Secondmate home does **not** retroactively set that already-running Secondmate process's ambient `TRACEPARENT`.
-- A Secondmate **launched or relaunched after** enablement is spawned by the primary with the primary's `TRACEPARENT` in its environment, so it preserves the primary trace into its own nested workers - one connected tree.
+- A Secondmate **launched or relaunched after** enablement is spawned by the primary with the primary's `TRACEPARENT` and the primary's effective on/off decision (delivered as `FM_TRACE_CONTEXT` in the launch prefix by `bin/fm-spawn.sh`) in its environment, so the primary's enable/disable state governs that Secondmate's own workers both ways.
+  An enabled primary preserves one connected trace into them, while `FM_TRACE_CONTEXT=off` on the primary keeps them untraced even when the `config/trace-context` file was copied into the Secondmate home - a real fleet-level kill switch, not only a per-home file toggle.
 - An **already-running** Secondmate has no ambient `TRACEPARENT`, so its subsequent workers start their own new root traces - still valid, just not joined to the primary's trace - until that Secondmate is relaunched.
 
 So enabling trace context mid-session does not instantly weave every in-flight agent into one tree; it applies from each agent's next launch. Firstmate deliberately does not restart or re-environment a running agent to hide this, which would be disruptive lifecycle control the observer does not need.
