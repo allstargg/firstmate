@@ -41,15 +41,14 @@
 #                           non-empty value disables, and unset OR empty defers
 #                           to the file.
 #   The primary propagates config/trace-context into secondmate homes
-#   (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) AND passes its own
-#   effective on/off decision to a newly launched secondmate as FM_TRACE_CONTEXT
-#   in the launch prefix (bin/fm-spawn.sh), so a FM_TRACE_CONTEXT override on the
-#   primary - not only the copied file - governs that secondmate's own workers
-#   both ways (off is a real kill switch even when the file was copied).
-#   Enablement takes effect at each agent's next launch, so a Secondmate launched
-#   or relaunched after enablement carries the primary's decision and trace into
-#   its nested workers, while an already-running Secondmate roots new traces for
-#   its own workers until it is relaunched.
+#   (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) AND snapshots its own
+#   effective on/off decision into a newly launched secondmate as a non-empty
+#   FM_TRACE_CONTEXT value in the launch prefix (bin/fm-spawn.sh).
+#   Because that environment override wins over the copied file, the snapshot is
+#   fixed for the secondmate process lifetime: on keeps its workers enabled and
+#   off keeps them disabled, regardless of later config-file pushes.
+#   Relaunching the secondmate snapshots the primary's then-current decision and,
+#   when enabled, carries the primary's trace into nested workers.
 #
 # Wire shape: version 00 only, "00-<32 hex trace>-<16 hex span>-<2 hex flags>",
 # with the trace id and span id never all-zero (W3C rejects both). New roots use

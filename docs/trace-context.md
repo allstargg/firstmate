@@ -36,16 +36,19 @@ The point of these rules is to never mint an unrelated root by accident.
 
 A malformed or all-zero inherited value is treated as absent, so garbage never propagates and the spawn roots a clean trace instead (it is not omitted).
 
-### Enablement takes effect at the next launch, not retroactively
+### Enablement is launch-scoped, not retroactive
 
-Trace context is read from a process's environment, which is fixed when that process starts, so enabling the capability affects only agents spawned *after* enablement:
+The primary resolves its effective trace-context decision for every spawn, but a Secondmate receives a snapshot of that decision when the Secondmate process launches:
 
-- The primary propagates `config/trace-context` into Secondmate homes (it is in `FM_INHERITABLE_CONFIG`), and `bin/fm-config-push.sh` can push it to already-running homes, but copying the flag into a live Secondmate home does **not** retroactively set that already-running Secondmate process's ambient `TRACEPARENT`.
-- A Secondmate **launched or relaunched after** enablement is spawned by the primary with the primary's `TRACEPARENT` and the primary's effective on/off decision (delivered as `FM_TRACE_CONTEXT` in the launch prefix by `bin/fm-spawn.sh`) in its environment, so the primary's enable/disable state governs that Secondmate's own workers both ways.
-  An enabled primary preserves one connected trace into them, while `FM_TRACE_CONTEXT=off` on the primary keeps them untraced even when the `config/trace-context` file was copied into the Secondmate home - a real fleet-level kill switch, not only a per-home file toggle.
-- An **already-running** Secondmate has no ambient `TRACEPARENT`, so its subsequent workers start their own new root traces - still valid, just not joined to the primary's trace - until that Secondmate is relaunched.
+- The primary propagates `config/trace-context` into Secondmate homes because it is in `FM_INHERITABLE_CONFIG`, but `bin/fm-spawn.sh` also launches each Secondmate with the primary's effective decision normalized to a non-empty `FM_TRACE_CONTEXT=on|off` environment override.
+- A Secondmate launched while enabled receives the primary's `TRACEPARENT` when carrier resolution succeeds and keeps spawning enabled workers from that trace.
+  A Secondmate launched while disabled keeps its workers untraced even if `config/trace-context` is present in its home.
+- An already-running Secondmate retains that launch-time `FM_TRACE_CONTEXT` snapshot.
+  Pushing or removing `config/trace-context` in its home, or changing the primary's effective decision, cannot switch it between enabled and disabled because the non-empty environment override continues to win.
+- Relaunching the Secondmate snapshots the primary's then-current decision and, when enabled, receives the primary's current carrier.
 
-So enabling trace context mid-session does not instantly weave every in-flight agent into one tree; it applies from each agent's next launch. Firstmate deliberately does not restart or re-environment a running agent to hide this, which would be disruptive lifecycle control the observer does not need.
+So a primary-side change affects new primary spawns immediately but affects a Secondmate's nested spawns only after that Secondmate is relaunched.
+Firstmate deliberately does not restart or re-environment a running agent to hide this boundary, which would be disruptive lifecycle control the observer does not need.
 
 ## Sampling
 

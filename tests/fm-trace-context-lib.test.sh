@@ -149,23 +149,23 @@ out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_OFF" "$NOMETA")
 fm_trace_context_valid "$out" || fail "enabled resolve must mint a valid traceparent: $out"
 pass "resolve mints a valid traceparent when enabled"
 
-# --- secondmate enablement boundary: ambient env decides join vs new root -----
-# A Secondmate is a process whose ambient TRACEPARENT is fixed at launch, so
-# enabling the capability mid-session cannot retroactively trace an
-# already-running Secondmate. resolve defaults its inherited value to
-# $TRACEPARENT, so an already-running Secondmate (no ambient TRACEPARENT) roots a
-# NEW trace for its workers, while a Secondmate launched/relaunched after
-# enablement (ambient TRACEPARENT set) continues the primary trace.
+# --- secondmate launch snapshot boundary --------------------------------------
+# fm-spawn launches every Secondmate with a non-empty FM_TRACE_CONTEXT snapshot.
+# That override must keep winning over later file state for the process lifetime.
+# When the snapshot is on, ambient TRACEPARENT decides whether workers join the
+# primary trace or start a new root.
 PRIMARY_TP='00-abcabcabcabcabcabcabcabcabcabcab-1212121212121212-01'
 saved_tp=${TRACEPARENT-__unset__}
 unset TRACEPARENT
-already=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$WORK/sm-already.meta")
-fm_trace_context_valid "$already" || fail "an already-running secondmate (no ambient TRACEPARENT) must still mint a valid root: $already"
-[ "${already:3:32}" != "${PRIMARY_TP:3:32}" ] || fail "an already-running secondmate must NOT be joined to the primary trace"
+frozen_off=$(FM_TRACE_CONTEXT=off fm_trace_context_resolve "$CFG_ON" "$WORK/sm-frozen-off.meta")
+[ -z "$frozen_off" ] || fail "a Secondmate launched off must stay disabled even after the config file appears: $frozen_off"
+frozen_on=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_OFF" "$WORK/sm-frozen-on.meta")
+fm_trace_context_valid "$frozen_on" || fail "a Secondmate launched on must stay enabled even while the config file is absent: $frozen_on"
+[ "${frozen_on:3:32}" != "${PRIMARY_TP:3:32}" ] || fail "an enabled Secondmate without an ambient carrier must start a new root"
 relaunched=$(TRACEPARENT="$PRIMARY_TP" FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$WORK/sm-relaunched.meta")
 [ "${relaunched:3:32}" = "${PRIMARY_TP:3:32}" ] || fail "a relaunched secondmate (ambient TRACEPARENT set) must continue the primary trace id: $relaunched"
 [ "$saved_tp" = "__unset__" ] || export TRACEPARENT="$saved_tp"
-pass "enablement boundary: an already-running Secondmate roots a new trace for its workers; a Secondmate launched/relaunched with TRACEPARENT continues the primary trace"
+pass "Secondmate launch snapshot stays off or on despite later file state; a relaunched enabled Secondmate continues the primary trace"
 
 # --- recovery: a recorded value is reused verbatim, disabled still omits -----
 
