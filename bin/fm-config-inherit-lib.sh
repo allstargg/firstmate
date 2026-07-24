@@ -10,11 +10,11 @@
 # bounds that home's startup-memory curation, and primary
 # config/herdr-presentation-spaces enables the same default-off Herdr presentation
 # projection, and primary
-# config/trace-context enables the same default-off W3C trace-context
-# propagation, so a Secondmate launched or relaunched after enablement carries
-# the primary trace into its nested workers - an already-running Secondmate roots
-# new traces for its own workers until it is relaunched; see
-# docs/trace-context.md). It also pushes
+# config/trace-context is copied as part of the default-off W3C trace-context
+# setup. The primary also snapshots its effective trace-context decision into a
+# newly launched Secondmate, so later config pushes do not change an already-
+# running Secondmate's enabled or disabled state; see docs/trace-context.md).
+# It also pushes
 # the one primary-authoritative shared captain-preference file,
 # data/captain-shared.md, into each secondmate home's data/ as a read-only copy.
 #
