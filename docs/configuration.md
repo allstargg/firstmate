@@ -116,6 +116,21 @@ An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisel
 A missing or failing channel logs and falls through to the next, never crashing the daemon.
 See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
+
+The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
+When enabled, firstmate resolves one W3C `traceparent` for a task (minted on the first spawn, reused verbatim on relaunch), injects it into the agent's pane shell as `TRACEPARENT` immediately before launch through the same channel that ships `GOTMPDIR` (so every spawn backend and harness gets it for ship, scout, and secondmate spawns), and records the identical value as `traceparent=` in `state/<id>.meta`, so an external observer reads exactly the identity the child received.
+`TRACEPARENT` here is a firstmate convention carrying a W3C-formatted value in the environment: W3C Trace Context standardizes the `traceparent` HTTP header, not an environment variable, and OpenTelemetry SDKs do not read `TRACEPARENT` from the environment automatically, so a downstream observer or instrumentation must explicitly read this env value or the `traceparent=` meta field; this feature parents no SDK span by itself.
+`FM_TRACE_CONTEXT` overrides the file: `1`/`on`/`true`/`yes` enables, any other non-empty value disables, and unset or empty defers to the file.
+A spawn with no valid inherited `TRACEPARENT` starts a new root trace; a spawn whose firstmate already holds a valid `TRACEPARENT` keeps that trace id with a fresh span id, so a nested Firstmate -> Secondmate -> worker chain shares one trace; and a relaunch reuses the value already recorded in the task's meta, so identity is stable across restarts.
+A firstmate-minted root uses a random id and reads no prompt, path, task prose, credential, or arbitrary environment key; an inherited `TRACEPARENT` is opaque caller-controlled data (up to 24 bytes of trace/span id material) that firstmate accepts after syntax validation without interpreting, so exposure is bounded to that fixed-width carrier rather than a general content or secret channel.
+The feature adds no `OTEL_` variables, no `tracestate`, no arbitrary environment injection, and no configurable or arbitrary command; it runs only the fixed local `od` and `tr` to read a few bytes of entropy.
+Entropy or validation failure omits the carrier for that spawn without aborting it; a malformed or all-zero inherited value is treated as absent and roots a fresh trace rather than being omitted.
+Minting is a small local entropy pipeline - the fixed local `od`/`tr` resolved from PATH, with no configured provider, network, or watchdog and no hard latency guarantee.
+A default-off spawn writes no `traceparent=` line and injects no `TRACEPARENT`, leaving the generated meta and launch environment unchanged.
+Enabling it on the primary takes effect for agents spawned after enablement: a Secondmate launched or relaunched afterwards carries the primary trace into its own nested workers, while an already-running Secondmate only starts new root traces for its subsequent workers until it is relaunched (see [`trace-context.md`](trace-context.md)).
+The primary propagates `config/trace-context` into secondmate homes so enabling it on the primary keeps the nested chain traced for newly launched agents; `bin/fm-trace-context-lib.sh`'s header owns the exact wire shape and mechanics, [`trace-context.md`](trace-context.md) owns the rationale and current behavior, and [`verification/trace-context.md`](verification/trace-context.md) records the repeatable evidence.
+
 ## Gate defaults (.no-mistakes.yaml)
 
 The tracked `.no-mistakes.yaml` keeps test evidence outside the repo and pins `commands.lint` to `bin/fm-lint.sh` so local lint matches CI.
@@ -305,7 +320,7 @@ When a running home advances and its loaded instruction surface (`AGENTS.md`, `b
 If that send fails, bootstrap keeps an idempotent retry marker and emits `NUDGE_SECONDMATES:` with the failure reason.
 The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails; already-live and successfully relaunched secondmates are handled silently.
 For a mid-session inherited local-material edit where tracked-file sync is not needed, run `bin/fm-config-push.sh`.
-It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, `backend`, `herdr-presentation-spaces`, `startup-memory-budget`, and `data/captain-shared.md` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero for real propagation errors or config-reread send failures.
+It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, `backend`, `herdr-presentation-spaces`, `startup-memory-budget`, `trace-context`, and `data/captain-shared.md` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero for real propagation errors or config-reread send failures.
 When an allowlisted config item changes for an already-running local home, it sends the literal-content reread pointer described in [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); unchanged allowlisted config sends no pointer unless a previous delivery is pending.
 A changed remote home instead receives one durably recorded marked re-read instruction after the allowlisted bytes have transferred because primary-local generation paths are not meaningful on another host.
 The locked bootstrap inheritance pass uses the same placement-specific behavior; see `secondmate-provisioning` for the single contract owner.
@@ -471,6 +486,7 @@ FM_PROJECTS_OVERRIDE=    # alternate projects dir, mainly for tests
 FM_CONFIG_OVERRIDE=      # alternate config dir, mainly for tests
 FM_PROC_ROOT_OVERRIDE=   # alternate /proc root for the Linux process-identity read in fm-wake-lib.sh, mainly for tests
 FM_BACKEND=             # optional runtime backend override for new spawns; tmux/herdr/zellij/orca/cmux support ship/scout spawns, codex-app is not accepted
+FM_TRACE_CONTEXT=       # enable/disable default-off native W3C trace-context propagation; 1/on/true/yes enable, any other non-empty value disables, unset or empty defers to config/trace-context
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_BACKEND_HERDR_COMPOSER_LINES=20  # herdr-only: tail lines scanned by composer-state guard/fallback paths; idle-baseline submit confirmation uses agent-state
 FM_BACKEND_HERDR_IDLE_RE='^Type a message\.\.\.$'  # herdr-only: empty-composer placeholder regex after shared ghost extraction plus border and prompt stripping
