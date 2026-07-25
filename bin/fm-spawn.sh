@@ -1901,7 +1901,19 @@ fi
 # context is treated as absent and roots a fresh trace. Reuses this task's
 # already-recorded value on relaunch. Never aborts the spawn and adds only the
 # cost of reading a few bytes of entropy.
-SPAWN_TRACEPARENT=$(fm_trace_context_resolve "$CONFIG" "$STATE/$ID.meta" || true)
+#
+# Freeze the effective on/off decision ONCE here and reuse it for BOTH the
+# recorded/injected carrier and the secondmate launch snapshot below, so a
+# config-file change between two separate reads can never pair a carrier with the
+# opposite enable state. The resolve runs under the frozen FM_TRACE_CONTEXT so it
+# cannot independently re-read the file and diverge from the snapshot.
+if fm_trace_context_enabled "$CONFIG"; then
+  SPAWN_TRACE_EFFECTIVE=on
+  SPAWN_TRACEPARENT=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$STATE/$ID.meta" || true)
+else
+  SPAWN_TRACE_EFFECTIVE=off
+  SPAWN_TRACEPARENT=
+fi
 
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
@@ -1985,8 +1997,9 @@ if [ "$KIND" = secondmate ]; then
   # on the primary reaches the secondmate's OWN workers, not just the copied
   # config/trace-context file: otherwise off would not disable them and on would
   # not enable them across the launch boundary (bin/fm-trace-context-lib.sh header).
-  if fm_trace_context_enabled "$CONFIG"; then sm_trace_context=on; else sm_trace_context=off; fi
-  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$sm_trace_context $LAUNCH"
+  # Reuse the single frozen decision from the carrier resolution above so the
+  # injected carrier and this on/off snapshot are guaranteed to agree.
+  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE $LAUNCH"
 fi
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so

@@ -325,11 +325,31 @@ test_secondmate_env_off_file_present_keeps_nested_worker_disabled() {
   pass "two-level: env-off/file-present keeps the nested worker disabled even though the config file was copied into the secondmate home"
 }
 
+# Single-frozen-decision guarantee: for a secondmate spawn the recorded/injected
+# carrier and the delivered FM_TRACE_CONTEXT snapshot are always derived from ONE
+# effective decision, so they cannot disagree (no carrier paired with off, no
+# off snapshot paired with a carrier). This drives the file-decided path
+# (FM_TRACE_CONTEXT unset), which is exactly where the two-read correction matters
+# because the environment override is empty and only the config file decides.
+test_secondmate_carrier_and_snapshot_share_one_decision() {
+  run_two_level fileon present ""
+  [ "$TL_ENV_TC" = on ] || fail "a file-enabled secondmate must snapshot FM_TRACE_CONTEXT=on (got '$TL_ENV_TC')"
+  fm_trace_context_valid "$TL_CARRIER" \
+    || fail "a file-enabled secondmate's carrier must be present and valid, consistent with the on snapshot (got '$TL_CARRIER')"
+
+  run_two_level fileoff absent ""
+  [ "$TL_ENV_TC" = off ] || fail "a file-disabled secondmate must snapshot FM_TRACE_CONTEXT=off (got '$TL_ENV_TC')"
+  [ -z "$TL_CARRIER" ] \
+    || fail "a file-disabled secondmate must inject no carrier, consistent with the off snapshot (got '$TL_CARRIER')"
+  pass "secondmate carrier and FM_TRACE_CONTEXT snapshot always agree, both derived from one frozen decision (file-decided path)"
+}
+
 test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
 test_relaunch_reuses_recorded_carrier
 test_env_override_wins_over_file
 test_secondmate_env_on_file_absent_keeps_nested_worker_enabled
 test_secondmate_env_off_file_present_keeps_nested_worker_disabled
+test_secondmate_carrier_and_snapshot_share_one_decision
 
 echo "# all fm-trace-context-spawn tests passed"
