@@ -40,13 +40,14 @@
 #   FM_TRACE_CONTEXT        env override: 1/on/true/yes enables, any other
 #                           non-empty value disables, and unset OR empty defers
 #                           to the file.
-#   The primary propagates config/trace-context into secondmate homes
-#   (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) AND snapshots its own
-#   effective on/off decision into a newly launched secondmate as a non-empty
+#   At launch, the primary propagates config/trace-context into the secondmate
+#   home (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) AND snapshots
+#   its own effective on/off decision into the new process as a non-empty
 #   FM_TRACE_CONTEXT value in the launch prefix (bin/fm-spawn.sh).
 #   Because that environment override wins over the copied file, the snapshot is
 #   fixed for the secondmate process lifetime: on keeps its workers enabled and
-#   off keeps them disabled, regardless of later config-file pushes.
+#   off keeps them disabled. Live config convergence leaves trace-context
+#   unchanged so a legacy process without a launch snapshot cannot switch state.
 #   Relaunching the secondmate snapshots the primary's then-current decision and,
 #   when enabled, carries the primary's trace into nested workers.
 #
