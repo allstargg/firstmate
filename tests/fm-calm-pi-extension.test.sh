@@ -26,10 +26,18 @@ cleanup() {
 trap cleanup EXIT
 
 wait_for_text() {
-  local file=$1 text=$2 i=0
+  local file=$1 text i=0 complete
+  shift
   while [ "$i" -lt 120 ]; do
     tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - >"$file" 2>/dev/null || true
-    grep -Fq "$text" "$file" 2>/dev/null && return 0
+    complete=1
+    for text in "$@"; do
+      if ! grep -Fq "$text" "$file" 2>/dev/null; then
+        complete=0
+        break
+      fi
+    done
+    [ "$complete" -eq 1 ] && return 0
     sleep 0.05
     i=$((i + 1))
   done
@@ -1473,7 +1481,7 @@ TS
 }
 
 test_interactive_terminal_e2e() {
-  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_pid chrome_wait active_wait active_screen_wait
+  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_pid chrome_wait chrome_stop_wait active_wait active_screen_wait
   if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi calm interactive E2E"
     return 0
@@ -1673,8 +1681,10 @@ JSON
   assert_not_contains "$(cat "$default_snapshot")" 'Run `bin/fm-session-start.sh` now' \
     "native session-start context unexpectedly rendered while Calm was off"
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-o
-  wait_for_text "$expanded_snapshot" "escape to interrupt" \
-    || fail "Ctrl+O did not retain Pi's ordinary startup and tool expansion behavior"
+  # Pi writes the expanded header before the rest of the same TUI frame, so wait for both native regions together.
+  wait_for_text "$expanded_snapshot" "escape to interrupt" "CALM_E2E_OUTPUT" \
+    || fail "Ctrl+O did not settle with Pi's ordinary startup and tool expansion behavior"
+  assert_contains "$(cat "$expanded_snapshot")" "escape to interrupt" "ordinary Ctrl+O expansion did not expand Pi's startup help"
   assert_contains "$(cat "$expanded_snapshot")" "CALM_E2E_OUTPUT" "ordinary Ctrl+O expansion hid tool activity while calm mode was off"
 
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l "/calm"
@@ -1854,6 +1864,14 @@ JS
     chrome_wait=$((chrome_wait + 1))
   done
   kill "$chrome_pid" 2>/dev/null || true
+  chrome_stop_wait=0
+  while kill -0 "$chrome_pid" 2>/dev/null && [ "$chrome_stop_wait" -lt 20 ]; do
+    sleep 0.1
+    chrome_stop_wait=$((chrome_stop_wait + 1))
+  done
+  if kill -0 "$chrome_pid" 2>/dev/null; then
+    kill -KILL "$chrome_pid" 2>/dev/null || true
+  fi
   wait "$chrome_pid" 2>/dev/null || true
   grep -Fq '</html>' "$export_dom" 2>/dev/null \
     || fail "could not render calm-mode HTML export DOM"
