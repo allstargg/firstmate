@@ -96,14 +96,15 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
-# Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
-# reference must render as plain prose with no dangling apostrophe artifact.
+# Exercise the default no-mistakes ship path and pin the authority and pipeline
+# ownership language that has twice exposed Bash 3.2's heredoc lexer bug.
 test_no_mistakes_dod_wording() {
-  local home id brief
+  local home id brief status=0
   home="$TMP_ROOT/wording-home"
   mkdir -p "$home/data"
   id="brief-wording-b1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1 || status=$?
+  expect_code 0 "$status" "default no-mistakes ship brief must scaffold successfully"
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
@@ -114,9 +115,13 @@ test_no_mistakes_dod_wording() {
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`help`' "$brief" \
     "no-mistakes DOD must render literal backticks around help"
+  assert_grep "Firstmate applies the authority contract in its \`AGENTS.md\`" "$brief" \
+    "no-mistakes DOD lost firstmate authority ownership"
+  assert_grep "silently bypass the authority check applied by firstmate and any required captain escalation" "$brief" \
+    "no-mistakes DOD lost the ask-user auto-resolution warning"
   assert_no_grep "no-mistakes' own guidance" "$brief" \
     "no-mistakes DOD regressed to the apostrophe form that breaks bash -n"
-  pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
+  pass "fm-brief.sh: no-mistakes DOD scaffolds with pipeline and authority ownership"
 }
 
 test_ship_project_memory_wording() {

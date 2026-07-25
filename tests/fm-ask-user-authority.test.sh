@@ -120,18 +120,21 @@ test_captain_escalation_is_decision_ready() {
 }
 
 test_primary_and_secondmate_instruction_generation() {
-  local home ship charter
+  local home ship charter status=0
   home="$TMP_ROOT/home"
   mkdir -p "$home/data"
+  printf '%s\n' '- sample [no-mistakes] - authority fixture (added 2026-07-24)' > "$home/data/projects.md"
 
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$BRIEF" authority-worker sample >/dev/null 2>&1
+    "$BRIEF" authority-worker sample >/dev/null 2>&1 || status=$?
+  expect_code 0 "$status" "no-mistakes implementation brief must scaffold successfully"
   ship="$home/data/authority-worker/brief.md"
+  assert_present "$ship" "no-mistakes implementation brief was not generated"
   assert_grep 'ask-user findings are never yours to answer' "$ship" \
     "generated implementation brief lets the worker own an ask-user decision"
   assert_grep "Firstmate applies the authority contract in its \`AGENTS.md\`" "$ship" \
     "generated implementation brief bypasses the primary authority owner"
-  assert_grep "silently bypass firstmate's authority check and any required captain escalation" "$ship" \
+  assert_grep "silently bypass the authority check applied by firstmate and any required captain escalation" "$ship" \
     "generated implementation brief permits silent ask-user auto-resolution"
   assert_no_grep 'the captain, not you, owns the ask-user decisions' "$ship" \
     "generated implementation brief retained conflicting captain-only wording"
