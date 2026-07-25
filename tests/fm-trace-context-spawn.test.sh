@@ -35,6 +35,13 @@ case "${1:-}" in
   list-windows) exit 0 ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
   send-keys)
+    if [ "${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" = 1 ]; then
+      for a in "$@"; do
+        case "$a" in
+          "export TRACEPARENT="*) exit 1 ;;
+        esac
+      done
+    fi
     # Capture the text payload of both send forms: the literal launch
     # (`send-keys -t <target> -l <text>`) and a text line
     # (`send-keys -t <target> <text> Enter`). Skip the flags, the target, and
@@ -92,6 +99,7 @@ run_spawn() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    FM_FAKE_TRACEPARENT_SEND_FAIL="${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -237,6 +245,27 @@ test_disabled_writes_and_injects_neither() {
   pass "disabled: neither traceparent= in meta nor a TRACEPARENT export is produced"
 }
 
+test_failed_delivery_omits_metadata_and_still_launches() {
+  local rec out status meta
+  rec=$(make_spawn_case tc-send-failure)
+  read_case_record "$rec"
+  : > "$HOME_DIR/config/trace-context"
+
+  out=$(FM_FAKE_TRACEPARENT_SEND_FAIL=1 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "failed traceparent delivery must not abort spawn"
+  assert_contains "$out" "spawned $CASE_ID" "spawn should report success after failed traceparent delivery"
+  meta="$HOME_DIR/state/$CASE_ID.meta"
+
+  ! grep -q '^traceparent=' "$meta" \
+    || fail "failed traceparent delivery must not leave a traceparent= claim in meta"
+  ! grep -q '^export TRACEPARENT=' "$LAUNCH_LOG" \
+    || fail "the failed TRACEPARENT export must not be recorded as delivered"
+  grep -q 'claude' "$LAUNCH_LOG" || fail "the source task must still launch"
+  pass "failed TRACEPARENT delivery omits metadata while the source task still launches"
+}
+
 test_relaunch_reuses_recorded_carrier() {
   local rec out status meta first second injected
   rec=$(make_spawn_case tc-relaunch)
@@ -346,6 +375,7 @@ test_secondmate_carrier_and_snapshot_share_one_decision() {
 
 test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
+test_failed_delivery_omits_metadata_and_still_launches
 test_relaunch_reuses_recorded_carrier
 test_env_override_wins_over_file
 test_secondmate_env_on_file_absent_keeps_nested_worker_enabled

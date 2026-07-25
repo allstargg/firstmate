@@ -1930,9 +1930,7 @@ META_WINDOW=$T
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
-  # Default-off writes no traceparent= line (meta stays byte-identical); when on,
-  # this exact value is also injected into the pane as TRACEPARENT below.
-  [ -z "$SPAWN_TRACEPARENT" ] || echo "traceparent=$SPAWN_TRACEPARENT"
+  # Default-off writes no traceparent= line (meta stays byte-identical).
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
   # data/fm-backend-design-d7's P1 compatibility contract).
@@ -2005,10 +2003,13 @@ fi
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
-# Same carrier recorded in meta above, sent through the exact channel that already
-# ships GOTMPDIR, so every backend and harness - ship, scout, and secondmate - gets
-# it before launch. Skipped entirely when trace context is off.
-[ -z "$SPAWN_TRACEPARENT" ] || spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"
+# Send through the exact channel that already ships GOTMPDIR, so every backend
+# and harness - ship, scout, and secondmate - gets it before launch. Skipped
+# entirely when trace context is off.
+if [ -n "$SPAWN_TRACEPARENT" ] \
+  && spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
+  echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"
+fi
 sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
