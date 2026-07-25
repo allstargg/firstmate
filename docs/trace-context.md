@@ -43,11 +43,13 @@ A malformed or all-zero inherited value is treated as absent, so garbage never p
 
 The primary resolves its effective trace-context decision for every spawn, but a Secondmate receives a snapshot of that decision when the Secondmate process launches:
 
-- The primary propagates `config/trace-context` into Secondmate homes because it is in `FM_INHERITABLE_CONFIG`, but `bin/fm-spawn.sh` also launches each Secondmate with the primary's effective decision normalized to a non-empty `FM_TRACE_CONTEXT=on|off` environment override.
+- At launch, the primary propagates `config/trace-context` into the Secondmate home because it is in `FM_INHERITABLE_CONFIG`, and `bin/fm-spawn.sh` launches the Secondmate with the primary's effective decision normalized to a non-empty `FM_TRACE_CONTEXT=on|off` environment override.
 - A Secondmate launched while enabled receives the carrier resolved by the primary, which continues the primary trace with a fresh span id, and keeps spawning enabled workers from that trace.
   A Secondmate launched while disabled keeps its workers untraced even if `config/trace-context` is present in its home.
 - An already-running Secondmate retains that launch-time `FM_TRACE_CONTEXT` snapshot.
-  Pushing or removing `config/trace-context` in its home, or changing the primary's effective decision, cannot switch it between enabled and disabled because the non-empty environment override continues to win.
+  Live bootstrap convergence and `fm-config-push.sh` leave `config/trace-context` unchanged, and changing the primary's effective decision cannot switch the process between enabled and disabled because the non-empty environment override continues to win.
+- A legacy Secondmate launched before this capability has no launch-time override.
+  Leaving its `config/trace-context` unchanged during live convergence keeps its prior default-off behavior until relaunch.
 - Relaunching the Secondmate snapshots the primary's then-current decision.
   When enabled, it reuses the task's valid recorded carrier; only a task without one derives a child carrier from the primary's current context.
 

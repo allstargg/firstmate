@@ -10,10 +10,10 @@
 # bounds that home's startup-memory curation, and primary
 # config/herdr-presentation-spaces enables the same default-off Herdr presentation
 # projection, and primary
-# config/trace-context is copied as part of the default-off W3C trace-context
-# setup. The primary also snapshots its effective trace-context decision into a
-# newly launched Secondmate, so later config pushes do not change an already-
-# running Secondmate's enabled or disabled state; see docs/trace-context.md).
+# config/trace-context is copied at the launch convergence point as part of the
+# default-off W3C trace-context setup, while live convergence leaves it unchanged.
+# The primary also snapshots its effective trace-context decision into a newly
+# launched Secondmate; see docs/trace-context.md).
 # It also pushes
 # the one primary-authoritative shared captain-preference file,
 # data/captain-shared.md, into each secondmate home's data/ as a read-only copy.
@@ -408,6 +408,10 @@ propagate_inheritable_config() {
     case "$item" in
       ''|/*|.|..|../*|*/../*|*/..) return 1 ;;
     esac
+    if [ "${FM_CONFIG_INHERIT_LIVE:-0}" = 1 ] && [ "$item" = trace-context ]; then
+      record_inheritable_config_result "$item" unchanged "launch-scoped"
+      continue
+    fi
     src="$src_config/$item"
     dest="$dest_config/$item"
     # This one scalar config is consumed as a local safety boundary, so reject

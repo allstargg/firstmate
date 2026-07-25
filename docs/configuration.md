@@ -120,8 +120,9 @@ See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`veri
 
 The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
 `FM_TRACE_CONTEXT` overrides the file: `1`/`on`/`true`/`yes` enables, any other non-empty value disables, and unset or empty defers to the file.
-The primary copies the presence flag into Secondmate homes and snapshots its effective decision as a non-empty `FM_TRACE_CONTEXT=on|off` override when it launches a Secondmate.
+When launching a Secondmate, the primary copies the presence flag into its home and snapshots the primary's effective decision as a non-empty `FM_TRACE_CONTEXT=on|off` override.
 That launch-time override remains authoritative for the running Secondmate until relaunch.
+Live bootstrap convergence and `fm-config-push.sh` leave `trace-context` unchanged, so Secondmates launched before this capability do not change behavior until they are relaunched.
 See [`trace-context.md`](trace-context.md) for carrier semantics, supported routes, the already-running boundary, and safety limits; `bin/fm-trace-context-lib.sh`'s header owns the exact mechanics, and [`verification/trace-context.md`](verification/trace-context.md) records repeatable evidence.
 
 ## Gate defaults (.no-mistakes.yaml)
