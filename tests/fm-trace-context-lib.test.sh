@@ -239,20 +239,23 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 assert_grep 'fm-trace-context-lib.sh' "$SPAWN" "fm-spawn.sh must source the trace-context lib"
 assert_grep 'SPAWN_TRACEPARENT=' "$SPAWN" "fm-spawn.sh must assign the resolved carrier"
 assert_grep 'fm_trace_context_resolve' "$SPAWN" "fm-spawn.sh must resolve the carrier through the lib entry point"
-assert_grep 'SPAWN_TRACEPARENT" ] || echo "traceparent=' "$SPAWN" \
-  "fm-spawn.sh must record traceparent= only when non-empty (default-off writes nothing)"
-assert_grep 'SPAWN_TRACEPARENT" ] || spawn_send_text_line' "$SPAWN" \
-  "fm-spawn.sh must inject the carrier through the backend channel only when non-empty"
+assert_grep '&& spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then' "$SPAWN" \
+  "fm-spawn.sh must condition metadata publication on successful carrier delivery"
+assert_grep 'echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"' "$SPAWN" \
+  "fm-spawn.sh must record the delivered carrier in metadata"
 assert_grep 'export TRACEPARENT=' "$SPAWN" "fm-spawn.sh must inject the W3C TRACEPARENT env var"
-pass "fm-spawn.sh sources the lib and records/injects one shared SPAWN_TRACEPARENT, guarded so default-off stays byte-identical"
+pass "fm-spawn.sh sources the lib and records one shared SPAWN_TRACEPARENT only after successful injection"
 
 # The injection must ride the same channel and site as GOTMPDIR (before launch,
 # unconditional across kinds): the TRACEPARENT export follows the GOTMPDIR export.
 gotmp_line=$(grep -n 'export GOTMPDIR=' "$SPAWN" | tail -1 | cut -d: -f1)
 tp_line=$(grep -n 'export TRACEPARENT=' "$SPAWN" | tail -1 | cut -d: -f1)
-[ -n "$gotmp_line" ] && [ -n "$tp_line" ] && [ "$tp_line" -gt "$gotmp_line" ] && [ "$((tp_line - gotmp_line))" -le 5 ] \
-  || fail "the TRACEPARENT export must sit at the unconditional pre-launch GOTMPDIR site (gotmp=$gotmp_line tp=$tp_line)"
-pass "TRACEPARENT is injected at the same unconditional pre-launch site as GOTMPDIR, covering ship/scout/secondmate on every backend"
+meta_line=$(grep -n 'echo "traceparent=$SPAWN_TRACEPARENT" >>' "$SPAWN" | tail -1 | cut -d: -f1)
+[ -n "$gotmp_line" ] && [ -n "$tp_line" ] && [ -n "$meta_line" ] \
+  && [ "$tp_line" -gt "$gotmp_line" ] && [ "$((tp_line - gotmp_line))" -le 5 ] \
+  && [ "$meta_line" -gt "$tp_line" ] \
+  || fail "TRACEPARENT must be exported before metadata publication at the pre-launch GOTMPDIR site (gotmp=$gotmp_line tp=$tp_line meta=$meta_line)"
+pass "TRACEPARENT is injected at the unconditional pre-launch GOTMPDIR site and recorded only after successful delivery"
 
 # --- secondmate inheritance wires the nested chain ---------------------------
 
