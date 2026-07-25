@@ -5,7 +5,7 @@ Current behavior and rationale are owned by [`../trace-context.md`](../trace-con
 
 Date: 2026-07-24.
 Shell: GNU bash 3.2.57 (macOS).
-Base: `origin/main` at `861b1f8`.
+Comparison base: `main` at `b05eb24`.
 
 The colocated unit suite `tests/fm-trace-context-lib.test.sh` (26 assertions) exercises validation (valid accepted; malformed, wrong-length, uppercase, all-zero, `ff` version, and shell-metacharacter values rejected), root and child minting, sampled/unsampled flag inheritance, malformed and all-zero inheritance falling back to a root, the recovery reuse path, default-off omission, the enable precedence of `FM_TRACE_CONTEXT` over `config/trace-context` with unset or empty deferring to the file, the Secondmate launch-snapshot boundary with later file state, forced entropy failure omitting safely, the minted-root fixed-shape check, and the opaque-inheritance trust-boundary assertion (an inherited id passes through verbatim as caller-controlled data).
 
