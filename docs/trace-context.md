@@ -38,12 +38,15 @@ The point of these rules is to never mint an unrelated root by accident.
 - **Recovery** - a valid `traceparent=` already recorded in the task's meta is reused verbatim, so a relaunched or recovered task keeps one stable identity across restarts rather than starting a second trace.
 
 A malformed or all-zero inherited value is treated as absent, so garbage never propagates and the spawn roots a clean trace instead (it is not omitted).
+Disabling propagation is an intentional trace boundary: a disabled home injects no carrier even when its process inherited a valid `TRACEPARENT` or the task meta already contains a valid `traceparent=`.
+A disabled relaunch regenerates the task meta without `traceparent=`, so a later enabled relaunch derives a new child or root carrier instead of resuming the identity from before the boundary.
 
 ### Enablement is home-session-scoped
 
 Each locked `bin/fm-session-start.sh` run resolves that home's `config/trace-context` plus `FM_TRACE_CONTEXT` exactly once into session-scoped effective state.
 Every spawn from that home reads only the frozen `on` or `off` decision.
 Later config or environment edits are ignored until that home starts a new session.
+Missing, unreadable, or invalid effective state fails closed to `off`.
 
 When the primary launches a Secondmate, it propagates `config/trace-context` into the Secondmate home and passes the primary session's frozen decision as a non-empty `FM_TRACE_CONTEXT=on|off` launch override.
 The Secondmate resolves that inherited override when its own home session starts.
@@ -72,7 +75,7 @@ This is a deliberate, source-owned choice:
 
 - **Default-off.**
   With no `config/trace-context` and no `FM_TRACE_CONTEXT`, nothing is injected and no `traceparent=` line is written, so the generated meta and the launch environment are unchanged.
-  The spawn does source one extra library and make one config-file check, both of which resolve to a no-op, so it is not literally byte-for-byte identical as a process, but nothing an agent, an observer, or the meta can see differs.
+  A locked session start makes the one config-file check, and each spawn sources one extra library and reads the frozen effective-state file, so the process is not literally byte-for-byte identical, but nothing an agent, an observer, or the task meta can see differs.
 - **What is and is not exposed.**
   A Firstmate-*minted* root uses a random id and reads no prompt, path, task prose, credential, or arbitrary environment key, so Firstmate never *originates* sensitive data in the carrier.
   An *inherited* `TRACEPARENT` is opaque caller-controlled data: its 16-byte trace id and 8-byte span id are up to 24 bytes (48 hex chars) that Firstmate passes through after syntax validation without interpreting, so whoever set `TRACEPARENT` in Firstmate's environment (a trusted local operator or observer) controls those bytes.
@@ -82,6 +85,7 @@ This is a deliberate, source-owned choice:
   There is no configured provider command, no network, and no watchdog.
   The normal cost is small, but `od`/`tr` are external processes, so there is no hard latency guarantee - this is not a guaranteed-negligible bound.
   Any entropy or self-validation failure that returns omits the carrier for that spawn without aborting source work; a malformed or all-zero inherited value is treated as absent and roots a fresh trace (it is not an omission).
+  If the pre-launch carrier export fails, Firstmate omits the `traceparent=` metadata claim and still launches the task.
 - **Metadata-only.**
   The value lives in the ephemeral pane shell and in `state/<id>.meta`; teardown removes state as before, so there is no new durable surface and no schema migration.
 
