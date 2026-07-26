@@ -44,9 +44,10 @@ A disabled relaunch regenerates the task meta without `traceparent=`, so a later
 ### Enablement is home-session-scoped
 
 Each locked `bin/fm-session-start.sh` run resolves that home's `config/trace-context` plus `FM_TRACE_CONTEXT` exactly once into session-scoped effective state.
+The decision is atomically published through a same-directory temporary file and bound to the current session lock, so a failed publication cannot reactivate a stale `on` record from an earlier session.
 Every spawn from that home reads only the frozen `on` or `off` decision.
 Later config or environment edits are ignored until that home starts a new session.
-Missing, unreadable, or invalid effective state fails closed to `off`.
+Missing, stale, unreadable, invalid, or unsuccessfully published effective state defaults safely to `off`.
 
 When the primary launches a Secondmate, it propagates `config/trace-context` into the Secondmate home and passes the primary session's frozen decision as a non-empty `FM_TRACE_CONTEXT=on|off` launch override.
 The Secondmate resolves that inherited override when its own home session starts.

@@ -685,7 +685,7 @@ EOF
 }
 
 test_trace_context_effective_state_is_frozen_after_lock() {
-  local rec root home fakebin out
+  local rec root home fakebin out frozen
   rec=$(new_world trace-context-session-state)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -695,13 +695,14 @@ EOF
   : > "$home/config/trace-context"
 
   FM_TRACE_CONTEXT=off run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null
-  [ "$(cat "$home/state/.trace-context-effective")" = off ] \
+  [ "$(awk '{print $2}' "$home/state/.trace-context-effective")" = off ] \
     || fail "session start must freeze an env-off override over a present config flag"
 
   rm "$home/config/trace-context"
   FM_TRACE_CONTEXT=on run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null
-  [ "$(cat "$home/state/.trace-context-effective")" = on ] \
+  [ "$(awk '{print $2}' "$home/state/.trace-context-effective")" = on ] \
     || fail "a new session start must freeze an env-on override over an absent config flag"
+  frozen=$(cat "$home/state/.trace-context-effective")
 
   sleep 300 &
   holder_pid=$!
@@ -710,7 +711,7 @@ EOF
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
   assert_contains "$out" "READ-ONLY SESSION" "trace-context refusal fixture did not enter read-only mode"
-  [ "$(cat "$home/state/.trace-context-effective")" = on ] \
+  [ "$(cat "$home/state/.trace-context-effective")" = "$frozen" ] \
     || fail "a lock-refused session must not mutate the frozen trace-context state"
 
   pass "locked session start freezes trace context and lock refusal leaves it unchanged"

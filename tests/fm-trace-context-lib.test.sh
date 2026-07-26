@@ -138,7 +138,10 @@ FM_TRACE_CONTEXT='' fm_trace_context_enabled "$CFG_ON" || fail "empty FM_TRACE_C
 FM_TRACE_CONTEXT='' fm_trace_context_enabled "$CFG_OFF" && fail "empty FM_TRACE_CONTEXT must defer to an absent file (disabled)"
 pass "enablement is default-off; FM_TRACE_CONTEXT overrides with truthy/other precedence, and unset or empty defers to config/trace-context"
 
-SESSION_STATE="$WORK/.trace-context-effective"
+SESSION_DIR="$WORK/session-state"
+SESSION_STATE="$SESSION_DIR/.trace-context-effective"
+mkdir -p "$SESSION_DIR"
+printf '101\n' > "$SESSION_DIR/.lock"
 FM_TRACE_CONTEXT=off fm_trace_context_session_start "$CFG_ON" "$SESSION_STATE"
 [ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
   || fail "session state must freeze an env-off override over a present config file"
@@ -147,7 +150,25 @@ FM_TRACE_CONTEXT=on fm_trace_context_session_start "$CFG_OFF" "$SESSION_STATE"
   || fail "a new session state must freeze an env-on override over an absent config file"
 pass "session start normalizes config and environment precedence into frozen on/off state"
 
-printf 'invalid\n' > "$SESSION_STATE"
+printf '100 on\n' > "$SESSION_STATE"
+chmod 0400 "$SESSION_STATE"
+FM_TRACE_CONTEXT=off fm_trace_context_session_start "$CFG_ON" "$SESSION_STATE"
+[ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
+  || fail "atomic publication must replace a read-only stale on record with the current off decision"
+[ "$(cat "$SESSION_STATE")" = "101 off" ] \
+  || fail "session publication must bind the normalized decision to the current lock (got '$(cat "$SESSION_STATE")')"
+pass "session state is atomically published through a same-directory replacement"
+
+FM_TRACE_CONTEXT=on fm_trace_context_session_start "$CFG_OFF" "$SESSION_STATE"
+printf '202\n' > "$SESSION_DIR/.lock"
+chmod 0500 "$SESSION_DIR"
+FM_TRACE_CONTEXT=off fm_trace_context_session_start "$CFG_ON" "$SESSION_STATE"
+chmod 0700 "$SESSION_DIR"
+[ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
+  || fail "a failed publication must not reactivate the prior session's on decision"
+pass "a stale on record is inactive when publication fails in a new locked session"
+
+printf '202 invalid\n' > "$SESSION_STATE"
 [ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
   || fail "invalid session state must fail independent and default off"
 rm "$SESSION_STATE"
