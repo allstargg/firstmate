@@ -12,8 +12,8 @@
 # projection, and primary
 # config/trace-context is copied at the launch convergence point as part of the
 # default-off W3C trace-context setup, while live convergence leaves it unchanged.
-# The primary also snapshots its effective trace-context decision into a newly
-# launched Secondmate; see docs/trace-context.md).
+# The primary passes its frozen home-session decision into a newly launched
+# Secondmate; see docs/trace-context.md).
 # It also pushes
 # the one primary-authoritative shared captain-preference file,
 # data/captain-shared.md, into each secondmate home's data/ as a read-only copy.
@@ -409,7 +409,7 @@ propagate_inheritable_config() {
       ''|/*|.|..|../*|*/../*|*/..) return 1 ;;
     esac
     if [ "${FM_CONFIG_INHERIT_LIVE:-0}" = 1 ] && [ "$item" = trace-context ]; then
-      record_inheritable_config_result "$item" unchanged "launch-scoped"
+      record_inheritable_config_result "$item" unchanged "session-scoped"
       continue
     fi
     src="$src_config/$item"
