@@ -26,11 +26,11 @@
 #
 # Public entry points:
 #   fm_trace_context_session_start <config-dir> <effective-state-file>
-#     Resolves config/trace-context plus FM_TRACE_CONTEXT once and writes the
-#     normalized on/off decision for the locked home session.
+#     Resolves config/trace-context plus FM_TRACE_CONTEXT once and atomically
+#     writes the normalized on/off decision bound to the locked home session.
 #   fm_trace_context_session_effective <effective-state-file>
-#     Echoes the normalized frozen decision, defaulting to off when the state is
-#     absent or invalid.
+#     Echoes the normalized frozen decision only when its session binding matches
+#     the current lock, defaulting to off when the state is absent, stale, or invalid.
 #   fm_trace_context_resolve <config-dir> <meta-file> [<inherited-traceparent>]
 #     Echoes the traceparent to inject AND record, or nothing when the
 #     capability is off or when entropy or self-validation fails. A malformed or
@@ -47,9 +47,11 @@
 #                           non-empty value disables, and unset OR empty defers
 #                           to the file.
 #   Each locked home session resolves these inputs once into
-#   state/.trace-context-effective. Every spawn reads only that frozen on/off
-#   value, so later config and environment edits take effect only after a new
-#   home session starts.
+#   state/.trace-context-effective. The record is atomically published through a
+#   same-directory temporary file and bound to state/.lock; a failed publication
+#   cannot reactivate a stale on decision. Every spawn reads only that frozen
+#   on/off value, so later config and environment edits take effect only after a
+#   new home session starts.
 #   At launch, the primary propagates config/trace-context into the secondmate
 #   home (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) and passes its
 #   frozen on/off decision into the new process as a non-empty FM_TRACE_CONTEXT
@@ -131,22 +133,55 @@ fm_trace_context_enabled() {  # <config-dir>
   [ -f "$config_dir/trace-context" ]
 }
 
+# Echo the lock pid that owns the effective-state file's home, or fail when the
+# adjacent session lock is absent or malformed. Binding the decision to this
+# token makes a prior session's record inactive even if publication cannot
+# replace or remove that stale file.
+fm_trace_context_session_lock() {  # <effective-state-file>
+  local effective_file=$1 state_dir lock_pid
+  state_dir=${effective_file%/*}
+  [ "$state_dir" = "$effective_file" ] && state_dir=.
+  IFS= read -r lock_pid < "$state_dir/.lock" 2>/dev/null || return 1
+  case "$lock_pid" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$lock_pid" -gt 1 ] || return 1
+  printf '%s' "$lock_pid"
+}
+
 fm_trace_context_session_start() {  # <config-dir> <effective-state-file>
-  local config_dir=$1 effective_file=$2 value=off
-  fm_trace_context_enabled "$config_dir" && value=on
-  printf '%s\n' "$value" > "$effective_file" 2>/dev/null || {
-    : > "$effective_file" 2>/dev/null || true
+  local config_dir=$1 effective_file=$2 value=off lock_pid tmp
+  lock_pid=$(fm_trace_context_session_lock "$effective_file") || {
+    rm -f "$effective_file" 2>/dev/null || true
+    return 0
   }
+  fm_trace_context_enabled "$config_dir" && value=on
+  tmp=$(mktemp "$effective_file.tmp.XXXXXX" 2>/dev/null) || {
+    rm -f "$effective_file" 2>/dev/null || true
+    return 0
+  }
+  if ! printf '%s %s\n' "$lock_pid" "$value" > "$tmp" 2>/dev/null \
+    || ! mv -f "$tmp" "$effective_file" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null || true
+    rm -f "$effective_file" 2>/dev/null || true
+  fi
   return 0
 }
 
 fm_trace_context_session_effective() {  # <effective-state-file>
-  local effective_file=$1 value
-  value=$(sed -n '1p' "$effective_file" 2>/dev/null || true)
-  case "$value" in
-    on) printf '%s' on ;;
-    *) printf '%s' off ;;
-  esac
+  local effective_file=$1 current_lock recorded_lock='' value='' extra=''
+  current_lock=$(fm_trace_context_session_lock "$effective_file") || {
+    printf '%s' off
+    return 0
+  }
+  if [ -f "$effective_file" ] && [ ! -L "$effective_file" ]; then
+    IFS=' ' read -r recorded_lock value extra < "$effective_file" 2>/dev/null || true
+  fi
+  if [ "$recorded_lock" = "$current_lock" ] && [ "$value" = on ] && [ -z "$extra" ]; then
+    printf '%s' on
+  else
+    printf '%s' off
+  fi
 }
 
 # Echo any traceparent already recorded in <meta-file>, else nothing. Used for

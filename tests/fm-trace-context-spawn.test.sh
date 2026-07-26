@@ -79,7 +79,8 @@ make_spawn_case() {
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
   printf 'claude\n' > "$home/config/crew-harness"
-  printf 'off\n' > "$home/state/.trace-context-effective"
+  printf '%s\n' "$$" > "$home/state/.lock"
+  printf '%s off\n' "$$" > "$home/state/.trace-context-effective"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   id=$name-z1
@@ -121,6 +122,7 @@ run_spawn_tc() {
 
 start_trace_session() {
   local home=$1 tc=${2-}
+  printf '%s\n' "$$" > "$home/state/.lock"
   if [ -n "$tc" ]; then
     FM_TRACE_CONTEXT="$tc" fm_trace_context_session_start \
       "$home/config" "$home/state/.trace-context-effective"
