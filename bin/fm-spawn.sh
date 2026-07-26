@@ -905,9 +905,10 @@ if [ "$KIND" = secondmate ]; then
     exit 1
   fi
   CONFIG_INHERIT_LOCK_HELD=1
-  # Inheritance propagation: push the primary-authoritative local inheritance
+  # Inheritance propagation: push the primary-authoritative live-safe inheritance
   # surface into this secondmate home (fm-config-inherit-lib.sh).
-  propagate_secondmate_inheritance "$FM_HOME" "$PROJ_ABS" "$CONFIG" "$DATA" \
+  FM_CONFIG_INHERIT_LIVE=1 \
+    propagate_secondmate_inheritance "$FM_HOME" "$PROJ_ABS" "$CONFIG" "$DATA" \
     || echo "warning: secondmate $ID inheritance failed for $PROJ_ABS" >&2
   if [ -f "$PROJ_ABS/data/charter.md" ]; then
     BRIEF="$PROJ_ABS/data/charter.md"
@@ -1309,6 +1310,11 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
 esac
+if [ "$KIND" = secondmate ]; then
+  FM_INHERITABLE_CONFIG=trace-context \
+    propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
+    || echo "warning: secondmate $ID trace-context inheritance failed for $PROJ_ABS" >&2
+fi
 # #134 robustness: only tmux needs a worktree-detection target distinct from $T -
 # its rename-safe stable window id, set as WT_TARGET=$WID in the tmux branch above.
 # Every other backend addresses its pane/surface by the id already in $T, so default
@@ -1820,7 +1826,9 @@ spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # entirely when trace context is off.
 if [ -n "$SPAWN_TRACEPARENT" ] \
   && spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
-  echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"
+  if ! echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"; then
+    LAUNCH="unset TRACEPARENT; $LAUNCH"
+  fi
 fi
 sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"

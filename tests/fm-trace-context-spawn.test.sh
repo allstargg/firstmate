@@ -32,13 +32,25 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    [ -z "${FM_FAKE_DUPLICATE_WINDOW:-}" ] || printf '%s\n' "$FM_FAKE_DUPLICATE_WINDOW"
+    exit 0
+    ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
   send-keys)
     if [ "${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" = 1 ]; then
       for a in "$@"; do
         case "$a" in
           "export TRACEPARENT="*) exit 1 ;;
+        esac
+      done
+    fi
+    if [ "${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" = 1 ]; then
+      for a in "$@"; do
+        case "$a" in
+          "export TRACEPARENT="*)
+            chmod a-w "$FM_FAKE_META_PATH"
+            ;;
         esac
       done
     fi
@@ -102,6 +114,8 @@ run_spawn() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     FM_FAKE_TRACEPARENT_SEND_FAIL="${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" \
+    FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
+    FM_FAKE_META_PATH="$home/state/$1.meta" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -287,6 +301,61 @@ test_failed_delivery_omits_metadata_and_still_launches() {
   pass "failed TRACEPARENT delivery omits metadata while the source task still launches"
 }
 
+test_failed_metadata_append_unsets_carrier_and_still_launches() {
+  local rec out status meta
+  rec=$(make_spawn_case tc-metadata-failure)
+  read_case_record "$rec"
+  : > "$HOME_DIR/config/trace-context"
+  start_trace_session "$HOME_DIR"
+
+  out=$(FM_FAKE_TRACE_METADATA_APPEND_FAIL=1 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "failed traceparent metadata append must not abort spawn"
+  assert_contains "$out" "spawned $CASE_ID" "spawn should report success after failed metadata append"
+  meta="$HOME_DIR/state/$CASE_ID.meta"
+
+  ! grep -q '^traceparent=' "$meta" \
+    || fail "failed metadata append must not leave a traceparent= claim in meta"
+  grep -q '^unset TRACEPARENT; .*claude' "$LAUNCH_LOG" \
+    || fail "failed metadata append must unset TRACEPARENT in the launch command"
+  pass "failed traceparent metadata append removes the carrier from the launched task"
+}
+
+test_duplicate_secondmate_spawn_does_not_converge_trace_context() {
+  local base prim sm id log fake out status
+  base="$TMP_ROOT/duplicate-secondmate"
+  prim="$base/primary"
+  sm="$base/sm"
+  id=sm-duplicate
+  log="$base/launch.log"
+  mkdir -p "$prim/config" "$prim/data/$id" "$prim/state" "$prim/projects"
+  : > "$prim/config/trace-context"
+  printf 'charter brief\n' > "$prim/data/$id/brief.md"
+  touch "$prim/state/.last-watcher-beat"
+  start_trace_session "$prim"
+  mkdir -p "$sm/bin" "$sm/data"
+  printf '# Firstmate\n' > "$sm/AGENTS.md"
+  printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
+  printf 'charter\n' > "$sm/data/charter.md"
+  fake=$(make_spawn_fakebin "$base/fake")
+
+  out=$(env -u FM_TRACE_CONTEXT \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$prim" \
+    FM_STATE_OVERRIDE="$prim/state" FM_DATA_OVERRIDE="$prim/data" \
+    FM_PROJECTS_OVERRIDE="$prim/projects" FM_CONFIG_OVERRIDE="$prim/config" \
+    FM_SPAWN_NO_GUARD=1 CLAUDECODE=1 TMUX="fake,1,0" \
+    FM_FAKE_DUPLICATE_WINDOW="fm-$id" FM_FAKE_LAUNCH_LOG="$log" \
+    PATH="$fake:$PATH" "$SPAWN" "$id" "$sm" --secondmate 2>&1)
+  status=$?
+
+  [ "$status" -ne 0 ] || fail "duplicate secondmate spawn should be refused"
+  assert_contains "$out" "already exists" "duplicate secondmate spawn should report the existing endpoint"
+  [ ! -e "$sm/config/trace-context" ] \
+    || fail "duplicate preflight must not converge trace-context into the secondmate home"
+  pass "duplicate secondmate preflight leaves trace-context unchanged"
+}
+
 test_relaunch_reuses_recorded_carrier() {
   local rec out status meta first second injected
   rec=$(make_spawn_case tc-relaunch)
@@ -399,6 +468,8 @@ test_secondmate_carrier_and_snapshot_share_one_decision() {
 test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
 test_failed_delivery_omits_metadata_and_still_launches
+test_failed_metadata_append_unsets_carrier_and_still_launches
+test_duplicate_secondmate_spawn_does_not_converge_trace_context
 test_relaunch_reuses_recorded_carrier
 test_session_start_freezes_env_override_and_ignores_later_edits
 test_secondmate_env_on_file_absent_keeps_nested_worker_enabled
