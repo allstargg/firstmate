@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# tests/fm-trace-context-spawn.test.sh - spawn-path integration regression for
-# native W3C trace context. Drives bin/fm-spawn.sh through real meta writing and
-# the real pre-launch injection with a fake tmux pane and a real isolated git
-# worktree, so it proves the actual spawn behavior (not just that the source
-# text mentions the right symbols): enabled, the one resolved carrier is written
-# to state/<id>.meta AND the identical TRACEPARENT export is sent before the
-# launch literal; disabled, neither is written nor sent; and a relaunch reuses
-# the recorded carrier. The fake tmux captures every `send-keys -l` line, so no
-# real harness or live fleet is touched.
+# tests/fm-trace-context-spawn.test.sh - spawn-path integration regressions for
+# native W3C trace context using fake tmux panes and real isolated git worktrees.
+# See docs/verification/trace-context.md for the maintained coverage inventory.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -327,6 +321,7 @@ test_duplicate_secondmate_spawn_does_not_converge_trace_context() {
   base="$TMP_ROOT/duplicate-secondmate"
   prim="$base/primary"
   sm="$base/sm"
+  # shellcheck disable=SC2100 # Literal task id, not arithmetic.
   id=sm-duplicate
   log="$base/launch.log"
   mkdir -p "$prim/config" "$prim/data/$id" "$prim/state" "$prim/projects"

@@ -6,11 +6,9 @@ This document is the rationale and current-behavior guide; `docs/configuration.m
 
 ## Why this is a source change at all
 
-Everything else an observer needs is already derivable from Firstmate's durable operational artifacts.
-`state/<id>.meta` already carries the task id, backend, harness, model, effort, kind, and mode, and `state/*.status`, `.turn-ended`, and the branch key a spawn already computes let a downstream reconstruct lifecycle without any source change.
-The one thing that cannot be derived after the fact is a task-scoped trace id that exists in the agent's environment *before it launches* and is also known to the observer.
-`launch_template()` hardcodes per-harness prefixes and the only per-pane export is a hardcoded `GOTMPDIR`, so there is no seam for it.
-This increment adds exactly that seam and nothing more.
+Firstmate's durable operational artifacts already let a downstream observer derive logical task identity and lifecycle.
+The source capability an observer cannot reconstruct after launch is a task-scoped trace id delivered in the agent's environment before launch and recorded under the same identity in task metadata.
+This feature adds only that carrier seam.
 
 ## What it does
 
@@ -54,6 +52,7 @@ The Secondmate resolves that inherited override when its own home session starts
 A Secondmate launched while enabled receives the carrier resolved by the primary, continues the primary trace with a fresh span id, and keeps spawning enabled workers from that trace.
 A Secondmate launched while disabled keeps its workers untraced even if `config/trace-context` is present in its home.
 When enabled, a relaunch reuses the task's valid recorded carrier; only a task without one derives a child carrier from the primary's current context.
+A duplicate Secondmate launch is refused before trace-context inheritance, so duplicate-launch preflight does not mutate the Secondmate home.
 
 Changing the setting across the whole fleet requires a manual full fleet restart so every home starts a new session and freezes the new decision.
 Firstmate does not monitor setting drift, detect mismatches, refuse launches, or automatically stop or restart any home.
@@ -87,6 +86,7 @@ This is a deliberate, source-owned choice:
   The normal cost is small, but `od`/`tr` are external processes, so there is no hard latency guarantee - this is not a guaranteed-negligible bound.
   Any entropy or self-validation failure that returns omits the carrier for that spawn without aborting source work; a malformed or all-zero inherited value is treated as absent and roots a fresh trace (it is not an omission).
   If the pre-launch carrier export fails, Firstmate omits the `traceparent=` metadata claim and still launches the task.
+  If recording the carrier fails after export, Firstmate unsets `TRACEPARENT` in the launch command and still launches the task, so the child never receives an identity absent from its metadata.
 - **Metadata-only.**
   The value lives in the ephemeral pane shell and in `state/<id>.meta`; teardown removes state as before, so there is no new durable surface and no schema migration.
 
