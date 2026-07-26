@@ -79,6 +79,7 @@ make_spawn_case() {
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
   printf 'claude\n' > "$home/config/crew-harness"
+  printf 'off\n' > "$home/state/.trace-context-effective"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   id=$name-z1
@@ -118,6 +119,20 @@ run_spawn_tc() {
     "$SPAWN" "$@" 2>&1
 }
 
+start_trace_session() {
+  local home=$1 tc=${2-}
+  if [ -n "$tc" ]; then
+    FM_TRACE_CONTEXT="$tc" fm_trace_context_session_start \
+      "$home/config" "$home/state/.trace-context-effective"
+  else
+    (
+      unset FM_TRACE_CONTEXT
+      fm_trace_context_session_start \
+        "$home/config" "$home/state/.trace-context-effective"
+    )
+  fi
+}
+
 read_case_record() {
   IFS='|' read -r HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG CASE_ID <<EOF
 $1
@@ -147,6 +162,7 @@ run_two_level() {
   printf 'claude\n' > "$prim/config/crew-harness"
   [ "$pfile" = present ] && : > "$prim/config/trace-context"
   touch "$prim/state/.last-watcher-beat"
+  start_trace_session "$prim" "$penv"
 
   # Seed the secondmate home so validate_firstmate_home_for_spawn accepts it.
   mkdir -p "$sm/bin" "$sm/data"
@@ -183,6 +199,7 @@ run_two_level() {
   mkdir -p "$sm/state" "$sm/projects" "$sm/data/$worker_id"
   printf 'worker brief\n' > "$sm/data/$worker_id/brief.md"
   touch "$sm/state/.last-watcher-beat"
+  start_trace_session "$sm" "$TL_ENV_TC"
   wlog="$base/worker-launch.log"
   wfake=$(make_spawn_fakebin "$base/w-fake")
   : > "$wlog"
@@ -204,6 +221,7 @@ test_enabled_records_and_injects_identical_carrier_before_launch() {
   rec=$(make_spawn_case tc-on)
   read_case_record "$rec"
   : > "$HOME_DIR/config/trace-context"   # enable via the real config path
+  start_trace_session "$HOME_DIR"
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
@@ -250,6 +268,7 @@ test_failed_delivery_omits_metadata_and_still_launches() {
   rec=$(make_spawn_case tc-send-failure)
   read_case_record "$rec"
   : > "$HOME_DIR/config/trace-context"
+  start_trace_session "$HOME_DIR"
 
   out=$(FM_FAKE_TRACEPARENT_SEND_FAIL=1 \
     run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
@@ -271,6 +290,7 @@ test_relaunch_reuses_recorded_carrier() {
   rec=$(make_spawn_case tc-relaunch)
   read_case_record "$rec"
   : > "$HOME_DIR/config/trace-context"
+  start_trace_session "$HOME_DIR"
   meta="$HOME_DIR/state/$CASE_ID.meta"
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
@@ -294,30 +314,31 @@ test_relaunch_reuses_recorded_carrier() {
   pass "relaunch reuses the recorded carrier verbatim for both the meta record and the injected export"
 }
 
-test_env_override_wins_over_file() {
+test_session_start_freezes_env_override_and_ignores_later_edits() {
   local rec out status meta
-  # FM_TRACE_CONTEXT=off must disable even a file-enabled home.
   rec=$(make_spawn_case tc-envoff)
   read_case_record "$rec"
   : > "$HOME_DIR/config/trace-context"
-  out=$(run_spawn_tc off "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
+  start_trace_session "$HOME_DIR" off
+  out=$(run_spawn_tc on "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "env-off spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "env-off spawn should report success"
   meta="$HOME_DIR/state/$CASE_ID.meta"
-  ! grep -q '^traceparent=' "$meta" || fail "FM_TRACE_CONTEXT=off must disable even a file-enabled home"
-  ! grep -q '^export TRACEPARENT=' "$LAUNCH_LOG" || fail "FM_TRACE_CONTEXT=off must inject nothing even with the file present"
+  ! grep -q '^traceparent=' "$meta" || fail "session-frozen off must ignore a later FM_TRACE_CONTEXT=on"
+  ! grep -q '^export TRACEPARENT=' "$LAUNCH_LOG" || fail "session-frozen off must remain disabled after launch-time edits"
 
-  # FM_TRACE_CONTEXT=on must enable a home with no config file.
   rec=$(make_spawn_case tc-envon)
   read_case_record "$rec"
-  out=$(run_spawn_tc on "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
+  start_trace_session "$HOME_DIR" on
+  : > "$HOME_DIR/config/trace-context"
+  out=$(run_spawn_tc off "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "env-on spawn should succeed"
   meta="$HOME_DIR/state/$CASE_ID.meta"
   fm_trace_context_valid "$(meta_traceparent "$meta")" \
-    || fail "FM_TRACE_CONTEXT=on must enable even with no config file"
-  pass "FM_TRACE_CONTEXT overrides the file both ways: off disables a file-enabled home, on enables a fileless home"
+    || fail "session-frozen on must ignore a later FM_TRACE_CONTEXT=off"
+  pass "session start freezes the env override and later config or environment edits do not alter spawns"
 }
 
 # End-to-end two-level enable path: the primary is enabled by the environment
@@ -377,7 +398,7 @@ test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
 test_failed_delivery_omits_metadata_and_still_launches
 test_relaunch_reuses_recorded_carrier
-test_env_override_wins_over_file
+test_session_start_freezes_env_override_and_ignores_later_edits
 test_secondmate_env_on_file_absent_keeps_nested_worker_enabled
 test_secondmate_env_off_file_present_keeps_nested_worker_disabled
 test_secondmate_carrier_and_snapshot_share_one_decision

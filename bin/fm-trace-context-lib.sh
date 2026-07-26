@@ -22,9 +22,15 @@
 # already holds one, and REUSED verbatim from the meta on relaunch/recovery, so a
 # task keeps one stable logical identity across restarts.
 #
-# Usage: . bin/fm-trace-context-lib.sh   (pure function library, no side effects)
+# Usage: . bin/fm-trace-context-lib.sh
 #
-# Public entry point used by bin/fm-spawn.sh:
+# Public entry points:
+#   fm_trace_context_session_start <config-dir> <effective-state-file>
+#     Resolves config/trace-context plus FM_TRACE_CONTEXT once and writes the
+#     normalized on/off decision for the locked home session.
+#   fm_trace_context_session_effective <effective-state-file>
+#     Echoes the normalized frozen decision, defaulting to off when the state is
+#     absent or invalid.
 #   fm_trace_context_resolve <config-dir> <meta-file> [<inherited-traceparent>]
 #     Echoes the traceparent to inject AND record, or nothing when the
 #     capability is off or when entropy or self-validation fails. A malformed or
@@ -40,16 +46,15 @@
 #   FM_TRACE_CONTEXT        env override: 1/on/true/yes enables, any other
 #                           non-empty value disables, and unset OR empty defers
 #                           to the file.
+#   Each locked home session resolves these inputs once into
+#   state/.trace-context-effective. Every spawn reads only that frozen on/off
+#   value, so later config and environment edits take effect only after a new
+#   home session starts.
 #   At launch, the primary propagates config/trace-context into the secondmate
-#   home (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) AND snapshots
-#   its own effective on/off decision into the new process as a non-empty
-#   FM_TRACE_CONTEXT value in the launch prefix (bin/fm-spawn.sh).
-#   Because that environment override wins over the copied file, the snapshot is
-#   fixed for the secondmate process lifetime: on keeps its workers enabled and
-#   off keeps them disabled. Live config convergence leaves trace-context
-#   unchanged so a legacy process without a launch snapshot cannot switch state.
-#   Relaunching the secondmate snapshots the primary's then-current decision and,
-#   when enabled, carries the primary's trace into nested workers.
+#   home (FM_INHERITABLE_CONFIG in bin/fm-config-inherit-lib.sh) and passes its
+#   frozen on/off decision into the new process as a non-empty FM_TRACE_CONTEXT
+#   value in the launch prefix (bin/fm-spawn.sh). The Secondmate freezes that
+#   inherited decision when its own home session starts.
 #
 # Wire shape: version 00 only, "00-<32 hex trace>-<16 hex span>-<2 hex flags>",
 # with the trace id and span id never all-zero (W3C rejects both). New roots use
@@ -124,6 +129,24 @@ fm_trace_context_enabled() {  # <config-dir>
     esac
   fi
   [ -f "$config_dir/trace-context" ]
+}
+
+fm_trace_context_session_start() {  # <config-dir> <effective-state-file>
+  local config_dir=$1 effective_file=$2 value=off
+  fm_trace_context_enabled "$config_dir" && value=on
+  printf '%s\n' "$value" > "$effective_file" 2>/dev/null || {
+    : > "$effective_file" 2>/dev/null || true
+  }
+  return 0
+}
+
+fm_trace_context_session_effective() {  # <effective-state-file>
+  local effective_file=$1 value
+  value=$(sed -n '1p' "$effective_file" 2>/dev/null || true)
+  case "$value" in
+    on) printf '%s' on ;;
+    *) printf '%s' off ;;
+  esac
 }
 
 # Echo any traceparent already recorded in <meta-file>, else nothing. Used for

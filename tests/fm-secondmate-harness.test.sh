@@ -1348,7 +1348,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   assert_contains "$out" "backend: pushed" \
     "config push did not report backend as pushed"
   assert_contains "$out" "trace-context: unchanged" \
-    "live config push must report trace-context as launch-scoped and unchanged"
+    "live config push must report trace-context as session-scoped and unchanged"
   [ ! -e "$w/sm/config/trace-context" ] \
     || fail "live config push retroactively enabled trace context in a legacy secondmate home"
   assert_contains "$out" "config-reread: sent" \
@@ -1377,7 +1377,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   assert_contains "$out2" "backend: unchanged" \
     "idempotent config push did not report backend as unchanged"
   assert_contains "$out2" "trace-context: unchanged" \
-    "idempotent config push did not preserve launch-scoped trace context"
+    "idempotent config push did not preserve session-scoped trace context"
   assert_not_contains "$out2" "config-reread: sent" \
     "unchanged config must not send a reread message"
   [ ! -s "$log" ] || fail "unchanged config push still invoked tmux send: $(cat "$log")"

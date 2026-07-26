@@ -39,22 +39,20 @@ The point of these rules is to never mint an unrelated root by accident.
 
 A malformed or all-zero inherited value is treated as absent, so garbage never propagates and the spawn roots a clean trace instead (it is not omitted).
 
-### Enablement is launch-scoped, not retroactive
+### Enablement is home-session-scoped
 
-The primary resolves its effective trace-context decision for every spawn, but a Secondmate receives a snapshot of that decision when the Secondmate process launches:
+Each locked `bin/fm-session-start.sh` run resolves that home's `config/trace-context` plus `FM_TRACE_CONTEXT` exactly once into session-scoped effective state.
+Every spawn from that home reads only the frozen `on` or `off` decision.
+Later config or environment edits are ignored until that home starts a new session.
 
-- At launch, the primary propagates `config/trace-context` into the Secondmate home because it is in `FM_INHERITABLE_CONFIG`, and `bin/fm-spawn.sh` launches the Secondmate with the primary's effective decision normalized to a non-empty `FM_TRACE_CONTEXT=on|off` environment override.
-- A Secondmate launched while enabled receives the carrier resolved by the primary, which continues the primary trace with a fresh span id, and keeps spawning enabled workers from that trace.
-  A Secondmate launched while disabled keeps its workers untraced even if `config/trace-context` is present in its home.
-- An already-running Secondmate retains that launch-time `FM_TRACE_CONTEXT` snapshot.
-  Live bootstrap convergence and `fm-config-push.sh` leave `config/trace-context` unchanged, and changing the primary's effective decision cannot switch the process between enabled and disabled because the non-empty environment override continues to win.
-- A legacy Secondmate launched before this capability has no launch-time override.
-  Leaving its `config/trace-context` unchanged during live convergence keeps its prior default-off behavior until relaunch.
-- Relaunching the Secondmate snapshots the primary's then-current decision.
-  When enabled, it reuses the task's valid recorded carrier; only a task without one derives a child carrier from the primary's current context.
+When the primary launches a Secondmate, it propagates `config/trace-context` into the Secondmate home and passes the primary session's frozen decision as a non-empty `FM_TRACE_CONTEXT=on|off` launch override.
+The Secondmate resolves that inherited override when its own home session starts.
+A Secondmate launched while enabled receives the carrier resolved by the primary, continues the primary trace with a fresh span id, and keeps spawning enabled workers from that trace.
+A Secondmate launched while disabled keeps its workers untraced even if `config/trace-context` is present in its home.
+When enabled, a relaunch reuses the task's valid recorded carrier; only a task without one derives a child carrier from the primary's current context.
 
-So a primary-side change affects new primary spawns immediately but affects a Secondmate's nested spawns only after that Secondmate is relaunched.
-Firstmate deliberately does not restart or re-environment a running agent to hide this boundary, which would be disruptive lifecycle control the observer does not need.
+Changing the setting across the whole fleet requires a manual full fleet restart so every home starts a new session and freezes the new decision.
+Firstmate does not monitor setting drift, detect mismatches, refuse launches, or automatically stop or restart any home.
 
 ## Sampling
 
@@ -90,7 +88,7 @@ This is a deliberate, source-owned choice:
 ## Relationship to OpenTelemetry and later increments
 
 Firstmate learns nothing about OpenTelemetry, any exporter, collector, storage, or UI.
-It emits a standard W3C carrier and records the same identity; a downstream observer owns everything else and discovers active propagation from the effective `config/trace-context` / `FM_TRACE_CONTEXT` decision or the `traceparent=` field.
+It emits a standard W3C carrier and records the same identity; a downstream observer owns everything else and discovers active propagation from the home session's frozen decision or the `traceparent=` field.
 Native lifecycle-event emission, extra stable IDs, intake metadata, and any embedded OTLP are deliberately deferred until a running observer demonstrates a concrete fidelity gap that the derived artifacts cannot cover.
 
 ## Verification

@@ -138,6 +138,23 @@ FM_TRACE_CONTEXT='' fm_trace_context_enabled "$CFG_ON" || fail "empty FM_TRACE_C
 FM_TRACE_CONTEXT='' fm_trace_context_enabled "$CFG_OFF" && fail "empty FM_TRACE_CONTEXT must defer to an absent file (disabled)"
 pass "enablement is default-off; FM_TRACE_CONTEXT overrides with truthy/other precedence, and unset or empty defers to config/trace-context"
 
+SESSION_STATE="$WORK/.trace-context-effective"
+FM_TRACE_CONTEXT=off fm_trace_context_session_start "$CFG_ON" "$SESSION_STATE"
+[ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
+  || fail "session state must freeze an env-off override over a present config file"
+FM_TRACE_CONTEXT=on fm_trace_context_session_start "$CFG_OFF" "$SESSION_STATE"
+[ "$(fm_trace_context_session_effective "$SESSION_STATE")" = on ] \
+  || fail "a new session state must freeze an env-on override over an absent config file"
+pass "session start normalizes config and environment precedence into frozen on/off state"
+
+printf 'invalid\n' > "$SESSION_STATE"
+[ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
+  || fail "invalid session state must fail independent and default off"
+rm "$SESSION_STATE"
+[ "$(fm_trace_context_session_effective "$SESSION_STATE")" = off ] \
+  || fail "missing session state must fail independent and default off"
+pass "missing or invalid frozen session state defaults off"
+
 # --- resolve: default-off omits; enabled mints ------------------------------
 
 NOMETA="$WORK/none.meta"
@@ -149,10 +166,10 @@ out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_OFF" "$NOMETA")
 fm_trace_context_valid "$out" || fail "enabled resolve must mint a valid traceparent: $out"
 pass "resolve mints a valid traceparent when enabled"
 
-# --- secondmate launch snapshot boundary --------------------------------------
-# fm-spawn launches every Secondmate with a non-empty FM_TRACE_CONTEXT snapshot.
-# That override must keep winning over later file state for the process lifetime.
-# When the snapshot is on, ambient TRACEPARENT decides whether workers join the
+# --- secondmate home-session boundary ---------------------------------------
+# fm-spawn launches every Secondmate with the primary session's non-empty frozen
+# FM_TRACE_CONTEXT decision. The Secondmate resolves it at its own session start.
+# When the decision is on, ambient TRACEPARENT decides whether workers join the
 # primary trace or start a new root.
 PRIMARY_TP='00-abcabcabcabcabcabcabcabcabcabcab-1212121212121212-01'
 saved_tp=${TRACEPARENT-__unset__}
@@ -165,7 +182,7 @@ fm_trace_context_valid "$frozen_on" || fail "a Secondmate launched on must stay 
 relaunched=$(TRACEPARENT="$PRIMARY_TP" FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$WORK/sm-relaunched.meta")
 [ "${relaunched:3:32}" = "${PRIMARY_TP:3:32}" ] || fail "a relaunched secondmate (ambient TRACEPARENT set) must continue the primary trace id: $relaunched"
 [ "$saved_tp" = "__unset__" ] || export TRACEPARENT="$saved_tp"
-pass "Secondmate launch snapshot stays off or on despite later file state; a relaunched enabled Secondmate continues the primary trace"
+pass "Secondmate home-session state stays off or on despite later file state; a relaunched enabled Secondmate continues the primary trace"
 
 # --- recovery: a recorded value is reused verbatim, disabled still omits -----
 

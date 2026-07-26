@@ -137,11 +137,11 @@
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
 # success line and state/<id>.meta omit them.
-# When trace context is enabled (config/trace-context or FM_TRACE_CONTEXT; see
-# docs/configuration.md and bin/fm-trace-context-lib.sh) the meta also records one
-# W3C traceparent= carrier, the same value injected into the pane as TRACEPARENT;
-# the default-off path writes neither, leaving the generated meta and launch
-# environment unchanged.
+# When the home session's frozen trace-context decision is enabled (see
+# docs/configuration.md and bin/fm-trace-context-lib.sh), the meta also records
+# one W3C traceparent= carrier, the same value injected into the pane as
+# TRACEPARENT; the default-off path writes neither, leaving the generated meta
+# and launch environment unchanged.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1902,16 +1902,12 @@ fi
 # already-recorded value on relaunch. Never aborts the spawn and adds only the
 # cost of reading a few bytes of entropy.
 #
-# Freeze the effective on/off decision ONCE here and reuse it for BOTH the
-# recorded/injected carrier and the secondmate launch snapshot below, so a
-# config-file change between two separate reads can never pair a carrier with the
-# opposite enable state. The resolve runs under the frozen FM_TRACE_CONTEXT so it
-# cannot independently re-read the file and diverge from the snapshot.
-if fm_trace_context_enabled "$CONFIG"; then
-  SPAWN_TRACE_EFFECTIVE=on
+# The session-start path owns input resolution. Spawn consumes only the frozen
+# home-session state and reuses it for the carrier and Secondmate launch prefix.
+SPAWN_TRACE_EFFECTIVE=$(fm_trace_context_session_effective "$STATE/.trace-context-effective")
+if [ "$SPAWN_TRACE_EFFECTIVE" = on ]; then
   SPAWN_TRACEPARENT=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$STATE/$ID.meta" || true)
 else
-  SPAWN_TRACE_EFFECTIVE=off
   SPAWN_TRACEPARENT=
 fi
 
