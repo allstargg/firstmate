@@ -638,6 +638,26 @@ test_send_text_line_clears_partial_input_when_enter_fails() {
   pass "fm_backend_zellij_send_text_line: clears partial input when Enter fails"
 }
 
+test_send_text_line_reports_unsafe_input_when_cleanup_fails() {
+  local dir fb status
+  dir="$TMP_ROOT/sendline-cleanup-failure"; mkdir -p "$dir/responses"
+  zellij_pane_response "$dir" 1 7 3
+  zellij_pane_response "$dir" 3 7 3
+  printf '1\n' > "$dir/responses/4.exit"
+  zellij_pane_response "$dir" 5 7 3
+  printf '1\n' > "$dir/responses/6.exit"
+  fb=$(make_zellij_fakebin "$dir")
+
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" bash -c \
+    '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_send_text_line "firstmate:7" "export TRACEPARENT=carrier"' "$ROOT"
+  status=$?
+  expect_code 2 "$status" "send_text_line should distinguish uncleared input"
+  zellij_assert_call_order "$dir/log" $'\x1f''Enter' $'\x1f''Ctrl c' \
+    "send_text_line did not attempt cleanup after Enter failed"
+  pass "fm_backend_zellij_send_text_line: reports unsafe input when cleanup also fails"
+}
+
 test_expected_label_allows_matching_task_tab() {
   local dir fb
   dir="$TMP_ROOT/label-match"; mkdir -p "$dir/responses"
@@ -1079,6 +1099,7 @@ test_capture_fails_when_session_absent
 test_send_key_normalizes_and_targets_pane
 test_send_literal_uses_paste_separator_for_option_shaped_text
 test_send_text_line_clears_partial_input_when_enter_fails
+test_send_text_line_reports_unsafe_input_when_cleanup_fails
 test_expected_label_allows_matching_task_tab
 test_expected_label_rejects_reused_pane_id
 test_current_path_probes_with_marker_and_ignores_prompt_paths

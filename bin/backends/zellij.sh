@@ -464,8 +464,8 @@ fm_backend_zellij_send_key() {  # <target> <key> [expected-label]
 fm_backend_zellij_send_text_line() {  # <target> <text> [expected-label]
   fm_backend_zellij_send_literal "$1" "$2" "${3:-}" || return 1
   fm_backend_zellij_send_key "$1" Enter "${3:-}" && return 0
-  fm_backend_zellij_send_key "$1" C-c "${3:-}" >/dev/null 2>&1 || true
-  return 1
+  fm_backend_zellij_send_key "$1" C-c "${3:-}" >/dev/null 2>&1 && return 1
+  return 2
 }
 
 # fm_backend_zellij_capture: bounded plain-text pane capture. Mirrors

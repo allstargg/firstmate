@@ -39,6 +39,13 @@ case "${1:-}" in
         esac
       done
     fi
+    if [ "${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" = 1 ]; then
+      for a in "$@"; do
+        case "$a" in
+          "export TRACEPARENT="*) exit 2 ;;
+        esac
+      done
+    fi
     if [ "${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" = 1 ]; then
       for a in "$@"; do
         case "$a" in
@@ -108,6 +115,7 @@ run_spawn() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     FM_FAKE_TRACEPARENT_SEND_FAIL="${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" \
+    FM_FAKE_TRACEPARENT_SEND_UNSAFE="${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" \
     FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
     FM_FAKE_META_PATH="$home/state/$1.meta" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
@@ -295,6 +303,24 @@ test_failed_delivery_omits_metadata_and_still_launches() {
   pass "failed TRACEPARENT delivery omits metadata while the source task still launches"
 }
 
+test_unsafe_delivery_refuses_to_append_launch() {
+  local rec out status
+  rec=$(make_spawn_case tc-send-unsafe)
+  read_case_record "$rec"
+  : > "$HOME_DIR/config/trace-context"
+  start_trace_session "$HOME_DIR"
+
+  out=$(FM_FAKE_TRACEPARENT_SEND_UNSAFE=1 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
+  status=$?
+  [ "$status" -ne 0 ] || fail "uncleared traceparent input must stop spawn"
+  assert_contains "$out" "refusing to append the launch command" \
+    "unsafe traceparent delivery should report why spawn stopped"
+  ! grep -q 'claude' "$LAUNCH_LOG" \
+    || fail "unsafe traceparent delivery must not append the launch command"
+  pass "uncleared TRACEPARENT input stops before the launch command is appended"
+}
+
 test_failed_metadata_append_unsets_carrier_and_still_launches() {
   local rec out status meta
   rec=$(make_spawn_case tc-metadata-failure)
@@ -463,6 +489,7 @@ test_secondmate_carrier_and_snapshot_share_one_decision() {
 test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
 test_failed_delivery_omits_metadata_and_still_launches
+test_unsafe_delivery_refuses_to_append_launch
 test_failed_metadata_append_unsets_carrier_and_still_launches
 test_duplicate_secondmate_spawn_does_not_converge_trace_context
 test_relaunch_reuses_recorded_carrier

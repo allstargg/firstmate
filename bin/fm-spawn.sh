@@ -2008,10 +2008,17 @@ spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.
-if [ -n "$SPAWN_TRACEPARENT" ] \
-  && spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
-  if ! echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"; then
-    LAUNCH="unset TRACEPARENT; $LAUNCH"
+if [ -n "$SPAWN_TRACEPARENT" ]; then
+  if spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
+    if ! echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"; then
+      LAUNCH="unset TRACEPARENT; $LAUNCH"
+    fi
+  else
+    TRACE_SEND_STATUS=$?
+    if [ "$TRACE_SEND_STATUS" -eq 2 ]; then
+      echo "error: trace-context input could not be cleared for $W; refusing to append the launch command" >&2
+      exit 1
+    fi
   fi
 fi
 sleep 0.3
