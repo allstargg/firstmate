@@ -278,7 +278,7 @@ assert_grep 'fm-trace-context-lib.sh' "$SPAWN" "fm-spawn.sh must source the trac
 assert_grep 'SPAWN_TRACEPARENT=' "$SPAWN" "fm-spawn.sh must assign the resolved carrier"
 assert_grep 'fm_trace_context_resolve' "$SPAWN" "fm-spawn.sh must resolve the carrier through the lib entry point"
 # shellcheck disable=SC2016 # Dollar signs are literal source text in this fixed-string assertion.
-assert_grep '&& spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then' "$SPAWN" \
+assert_grep 'if spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then' "$SPAWN" \
   "fm-spawn.sh must condition metadata publication on successful carrier delivery"
 # shellcheck disable=SC2016 # Dollar signs are literal source text in this fixed-string assertion.
 assert_grep 'echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"' "$SPAWN" \
