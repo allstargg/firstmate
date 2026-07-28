@@ -70,7 +70,11 @@
 # arbitrary command execution. It DOES run the fixed local utilities `od` and
 # `tr` (resolved from PATH) to read a few bytes of entropy - a small local
 # pipeline with no configured provider, network, or watchdog, and no hard latency
-# guarantee; any failure that returns omits the carrier without aborting the spawn. A firstmate-MINTED root is random and reads no prompt, path,
+# guarantee; any resolver failure that returns omits the carrier without aborting
+# the spawn. Carrier-delivery failure also omits telemetry and continues when the
+# backend clears its input; if the backend reports that partial input could not be
+# cleared, fm-spawn refuses to append the launch command. A firstmate-MINTED root
+# is random and reads no prompt, path,
 # task prose, credential, or arbitrary environment key. An INHERITED traceparent,
 # by contrast, is opaque caller-controlled data: its 16-byte trace id and 8-byte
 # span id are up to 24 bytes (48 hex chars) that firstmate accepts after syntax
