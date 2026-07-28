@@ -658,6 +658,26 @@ test_send_text_line_clears_partial_input_when_enter_fails() {
   pass "fm_backend_cmux_send_text_line: clears partial input when Enter fails"
 }
 
+test_send_text_line_reports_unsafe_input_when_cleanup_fails() {
+  local dir fb status log
+  dir="$TMP_ROOT/sendline-cleanup-failure"; mkdir -p "$dir/responses"
+  cmux_panes_response "$dir" 1 "bbbbbbbb-1111-1111-1111-111111111111"
+  cmux_panes_response "$dir" 3 "bbbbbbbb-1111-1111-1111-111111111111"
+  printf '1\n' > "$dir/responses/4.exit"
+  cmux_panes_response "$dir" 5 "bbbbbbbb-1111-1111-1111-111111111111"
+  printf '1\n' > "$dir/responses/6.exit"
+  fb=$(make_cmux_fakebin "$dir")
+
+  PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_send_text_line "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "export TRACEPARENT=carrier"' "$ROOT"
+  status=$?
+  expect_code 2 "$status" "send_text_line should distinguish uncleared input"
+  log=$(cat "$dir/log")
+  assert_contains "$log" $'\x1f''send-key'$'\x1f''--workspace'$'\x1f''aaaaaaaa-0000-0000-0000-000000000000'$'\x1f''--surface'$'\x1f''bbbbbbbb-1111-1111-1111-111111111111'$'\x1f''ctrl-c' \
+    "send_text_line did not attempt cleanup after Enter failed"
+  pass "fm_backend_cmux_send_text_line: reports unsafe input when cleanup also fails"
+}
+
 # --- current_path: pwd-marker-probe (zellij-shape) ---------------------------
 
 test_current_path_probes_with_marker() {
@@ -1064,6 +1084,7 @@ test_send_key_normalizes_and_targets
 test_send_key_recovers_stale_target_by_label
 test_send_literal_uses_separator_for_option_shaped_text
 test_send_text_line_clears_partial_input_when_enter_fails
+test_send_text_line_reports_unsafe_input_when_cleanup_fails
 test_current_path_probes_with_marker
 test_composer_state_bare_prompt_is_empty
 test_composer_state_ghost_placeholder_is_empty
