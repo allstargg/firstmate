@@ -103,6 +103,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-trace-context-lib.sh
+. "$SCRIPT_DIR/fm-trace-context-lib.sh"
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
@@ -263,6 +265,9 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '●  otherwise mutate fleet state from this session.\n'
     printf '%s\n' "$BAR"
   }
+fi
+if [ "$READ_ONLY" -eq 0 ]; then
+  fm_trace_context_session_start "$CONFIG" "$STATE/.trace-context-effective"
 fi
 
 # --- 2. bootstrap --------------------------------------------------------
