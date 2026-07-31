@@ -53,72 +53,34 @@ pass "fm_trace_context_hex yields exact-length lowercase hex, distinct per call"
 
 # --- root mint ---------------------------------------------------------------
 
-ROOT_TP=$(fm_trace_context_mint "")
+ROOT_TP=$(fm_trace_context_mint)
 fm_trace_context_valid "$ROOT_TP" || fail "root mint must be a valid traceparent: $ROOT_TP"
 [ "${ROOT_TP:53:2}" = "01" ] || fail "root mint must default to sampled flags 01: $ROOT_TP"
 [ "${ROOT_TP:3:32}" != "00000000000000000000000000000000" ] || fail "root trace id must be non-zero"
-pass "fm_trace_context_mint with no parent starts a valid sampled root trace"
+pass "fm_trace_context_mint starts a valid sampled root trace"
 
-# --- child mint inherits trace id + flags, mints a fresh span ----------------
+# --- every mint roots a distinct trace: no parent-adoption path exists --------
+# The trace boundary is each task, so consecutive mints from one process must
+# never share a trace id; there is no argument or environment input through
+# which a caller could chain them.
 
-PARENT='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00'
-CHILD=$(fm_trace_context_mint "$PARENT")
-fm_trace_context_valid "$CHILD" || fail "child mint must be valid: $CHILD"
-[ "${CHILD:3:32}" = "${PARENT:3:32}" ] || fail "child must inherit the parent trace id"
-[ "${CHILD:53:2}" = "${PARENT:53:2}" ] || fail "child must inherit the parent flags (00)"
-[ "${CHILD:36:16}" != "${PARENT:36:16}" ] || fail "child must mint a fresh span id"
-pass "fm_trace_context_mint adopts a valid parent's trace id and flags with a fresh span id"
+SECOND_TP=$(fm_trace_context_mint)
+fm_trace_context_valid "$SECOND_TP" || fail "second mint must be a valid traceparent: $SECOND_TP"
+[ "${SECOND_TP:3:32}" != "${ROOT_TP:3:32}" ] || fail "every mint must root a distinct trace id"
+[ "${SECOND_TP:36:16}" != "${ROOT_TP:36:16}" ] || fail "every mint must carry a distinct span id"
+pass "every mint is an unrelated fresh root - one trace per task, no parent adoption"
 
-# --- sampling flags: root is sampled 01; a child preserves the parent flag -----
-
-sroot=$(fm_trace_context_mint "")
-[ "${sroot:53:2}" = "01" ] || fail "a minted root must be sampled (01): $sroot"
-sampled_child=$(fm_trace_context_mint '00-33333333333333333333333333333333-4444444444444444-01')
-[ "${sampled_child:53:2}" = "01" ] || fail "a child of a sampled (01) parent must stay sampled: $sampled_child"
-unsampled_child=$(fm_trace_context_mint '00-33333333333333333333333333333333-4444444444444444-00')
-[ "${unsampled_child:53:2}" = "00" ] || fail "a child of an unsampled (00) parent must stay unsampled: $unsampled_child"
-[ "${sampled_child:3:32}" = "33333333333333333333333333333333" ] || fail "a child must keep the parent trace id regardless of flags"
-pass "a root is sampled (01) by decision; a child preserves the parent's sampled/unsampled flag verbatim, never overriding it"
-
-# --- nested Firstmate -> Secondmate -> worker share one trace id -------------
-
-L1=$(fm_trace_context_mint "")        # primary spawns a secondmate
-L2=$(fm_trace_context_mint "$L1")     # secondmate spawns a worker
-L3=$(fm_trace_context_mint "$L2")     # a further nested spawn
-[ "${L1:3:32}" = "${L2:3:32}" ] && [ "${L2:3:32}" = "${L3:3:32}" ] \
-  || fail "nested chain must share one trace id"
-[ "${L1:36:16}" != "${L2:36:16}" ] && [ "${L2:36:16}" != "${L3:36:16}" ] && [ "${L1:36:16}" != "${L3:36:16}" ] \
-  || fail "nested chain must have distinct span ids"
-pass "nested Firstmate -> Secondmate -> worker mints share one trace id with distinct span ids"
-
-# --- malformed / all-zero inherited context roots a clean trace --------------
-
-for garbage in 'not-a-traceparent' '00-00000000000000000000000000000000-0000000000000000-01' '' ; do
-  fresh=$(fm_trace_context_mint "$garbage")
-  fm_trace_context_valid "$fresh" || fail "malformed/all-zero inherited must fall back to a valid root: '$garbage' -> '$fresh'"
-  [ "${fresh:3:32}" != "00000000000000000000000000000000" ] || fail "fallback root trace id must be non-zero"
-done
-pass "malformed or all-zero inherited context is treated as absent and roots a clean trace"
-
-# --- minted-root shape and the opaque-inheritance boundary -------------------
-# The honest guarantee is NOT "hex cannot carry data" - an inherited traceparent's
-# 24 id bytes are opaque caller-controlled data that firstmate passes through. It
-# is that a firstmate-MINTED root is exactly the fixed 55-char W3C form with random
-# ids and no free-form field where firstmate could originate a prompt, path, or
-# secret (that the lib reads no task prose is asserted separately below).
+# --- minted-root shape --------------------------------------------------------
+# A firstmate-MINTED root is exactly the fixed 55-char W3C form with random ids
+# and no free-form field where firstmate could originate a prompt, path, or
+# secret (that the lib reads no task prose is asserted separately below). With
+# no inherited-context path, every carrier the lib yields is either such a mint
+# or the same task's previously recorded carrier reused verbatim.
 case "$ROOT_TP" in
   *[!0-9a-f-]*) fail "a minted traceparent must contain only hex and hyphens: $ROOT_TP" ;;
 esac
 [ "${#ROOT_TP}" -eq 55 ] || fail "a minted traceparent is exactly 55 chars, got ${#ROOT_TP}"
 pass "a minted root is the fixed 55-char W3C form (hex and hyphens only), so firstmate originates no free-form content in the carrier"
-
-# The trust boundary, stated as a test: an inherited id is preserved verbatim, so
-# whoever set TRACEPARENT controls those bytes (opaque caller data, not firstmate-
-# originated).
-passthrough=$(fm_trace_context_mint '00-deadbeefdeadbeefdeadbeefdeadbeef-1234567812345678-00')
-[ "${passthrough:3:32}" = "deadbeefdeadbeefdeadbeefdeadbeef" ] \
-  || fail "an inherited trace id must pass through verbatim (caller-controlled): $passthrough"
-pass "an inherited traceparent's id bytes pass through verbatim - opaque caller-controlled data, a bounded fixed-width channel, not a firstmate-originated no-content guarantee"
 
 # --- enablement precedence ---------------------------------------------------
 
@@ -190,8 +152,10 @@ pass "resolve mints a valid traceparent when enabled"
 # --- secondmate home-session boundary ---------------------------------------
 # fm-spawn launches every Secondmate with the primary session's non-empty frozen
 # FM_TRACE_CONTEXT decision. The Secondmate resolves it at its own session start.
-# When the decision is on, ambient TRACEPARENT decides whether workers join the
-# primary trace or start a new root.
+# Its own launch-time TRACEPARENT stays in its process environment for its whole
+# life, but that is the Secondmate's agent identity, never a parent: every task
+# it spawns must root a fresh trace, or unrelated routed tasks would accumulate
+# into one ever-growing trace per Secondmate.
 PRIMARY_TP='00-abcabcabcabcabcabcabcabcabcabcab-1212121212121212-01'
 saved_tp=${TRACEPARENT-__unset__}
 unset TRACEPARENT
@@ -200,17 +164,24 @@ frozen_off=$(FM_TRACE_CONTEXT=off fm_trace_context_resolve "$CFG_ON" "$WORK/sm-f
 frozen_on=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_OFF" "$WORK/sm-frozen-on.meta")
 fm_trace_context_valid "$frozen_on" || fail "a Secondmate launched on must stay enabled even while the config file is absent: $frozen_on"
 [ "${frozen_on:3:32}" != "${PRIMARY_TP:3:32}" ] || fail "an enabled Secondmate without an ambient carrier must start a new root"
-relaunched=$(TRACEPARENT="$PRIMARY_TP" FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$WORK/sm-relaunched.meta")
-[ "${relaunched:3:32}" = "${PRIMARY_TP:3:32}" ] || fail "a relaunched secondmate (ambient TRACEPARENT set) must continue the primary trace id: $relaunched"
+routed_a=$(TRACEPARENT="$PRIMARY_TP" FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$WORK/sm-routed-a.meta")
+routed_b=$(TRACEPARENT="$PRIMARY_TP" FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$WORK/sm-routed-b.meta")
+fm_trace_context_valid "$routed_a" || fail "resolving under an ambient TRACEPARENT must still mint a valid carrier (a='$routed_a')"
+fm_trace_context_valid "$routed_b" || fail "resolving under an ambient TRACEPARENT must still mint a valid carrier (b='$routed_b')"
+[ "${routed_a:3:32}" != "${PRIMARY_TP:3:32}" ] && [ "${routed_b:3:32}" != "${PRIMARY_TP:3:32}" ] \
+  || fail "a task resolved under a persistent ambient TRACEPARENT must root its own trace, never adopt it (a='$routed_a' b='$routed_b')"
+[ "${routed_a:3:32}" != "${routed_b:3:32}" ] \
+  || fail "two tasks resolved from one ambient environment must root distinct traces (a='$routed_a' b='$routed_b')"
 [ "$saved_tp" = "__unset__" ] || export TRACEPARENT="$saved_tp"
-pass "Secondmate home-session state stays off or on despite later file state; a relaunched enabled Secondmate continues the primary trace"
+pass "Secondmate home-session state stays off or on despite later file state; ambient TRACEPARENT is never adopted, so each routed task roots its own trace"
 
 # --- recovery: a recorded value is reused verbatim, disabled still omits -----
 
 REC_META="$WORK/rec.meta"
 printf 'kind=ship\ntraceparent=%s\nmode=no-mistakes\n' "$VALID" > "$REC_META"
-out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$REC_META" '00-ffffffffffffffffffffffffffffffff-1111111111111111-01')
-[ "$out" = "$VALID" ] || fail "recovery must reuse the recorded traceparent verbatim, ignoring inherited (got '$out')"
+out=$(TRACEPARENT='00-ffffffffffffffffffffffffffffffff-1111111111111111-01' \
+  FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$REC_META")
+[ "$out" = "$VALID" ] || fail "recovery must reuse the recorded traceparent verbatim, ignoring the ambient environment (got '$out')"
 pass "resolve reuses a valid recorded traceparent verbatim on relaunch (stable identity across restarts)"
 
 out=$(fm_trace_context_resolve "$CFG_OFF" "$REC_META")
@@ -233,7 +204,7 @@ pass "resolve yields exactly one carrier per logical task, so the recorded and i
 # --- entropy failure omits telemetry safely (never aborts) -------------------
 
 fm_trace_context_hex() { return 1; }
-ef_mint=$(fm_trace_context_mint ""); ef_mint_rc=$?
+ef_mint=$(fm_trace_context_mint); ef_mint_rc=$?
 ef_res=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$NOMETA"); ef_res_rc=$?
 # Restore the real entropy source for any later use.
 # shellcheck source=/dev/null
