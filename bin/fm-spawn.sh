@@ -1903,10 +1903,11 @@ fi
 # Resolve the optional default-off W3C trace context (bin/fm-trace-context-lib.sh,
 # docs/configuration.md): the one carrier both recorded in meta and injected into
 # the pane, so an observer reads exactly what the child receives. Empty only when
-# disabled or on entropy/validation failure; malformed or all-zero inherited
-# context is treated as absent and roots a fresh trace. Reuses this task's
-# already-recorded value on relaunch. Never aborts the spawn and adds only the
-# cost of reading a few bytes of entropy.
+# disabled or on entropy/validation failure. Reuses this task's already-recorded
+# value on relaunch; any other spawn roots a fresh trace, never adopting this
+# process's own ambient TRACEPARENT, so each routed task is its own trace
+# boundary even under a persistent supervisor. Never aborts the spawn and adds
+# only the cost of reading a few bytes of entropy.
 #
 # The session-start path owns input resolution. Spawn consumes only the frozen
 # home-session state and reuses it for the carrier and Secondmate launch prefix.
