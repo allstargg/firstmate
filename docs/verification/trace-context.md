@@ -3,9 +3,9 @@
 Repeatable evidence for the default-off native W3C trace-context capability.
 Current behavior and rationale are owned by [`../trace-context.md`](../trace-context.md) and the configuration schema by [`../configuration.md`](../configuration.md) ("Trace context propagation"); this page records evidence only.
 
-Date: 2026-07-31.
+Date: 2026-08-03.
 Shell: GNU bash 3.2.57 (macOS).
-Comparison base: `main` at `66b0f77`.
+Comparison base: `main` at `4ee4a0a`.
 
 The colocated unit suite `tests/fm-trace-context-lib.test.sh` (26 assertions) exercises validation (valid accepted; malformed, wrong-length, uppercase, all-zero, `ff` version, and shell-metacharacter values rejected), root minting with every mint a distinct sampled root and no parent-adoption input, the recovery reuse path with the recorded carrier winning over the ambient environment, default-off omission, the enable precedence of `FM_TRACE_CONTEXT` over `config/trace-context` with unset or empty deferring to the file, normalized home-session state, atomic replacement of a read-only prior record, stale-session rejection after failed publication, missing or invalid state defaulting off, the Secondmate home-session boundary with later file state plus the per-task trace boundary (two resolves under one persistent ambient `TRACEPARENT` root two distinct traces and adopt neither), forced entropy failure omitting safely, and the minted-root fixed-shape check.
 
