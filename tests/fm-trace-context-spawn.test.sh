@@ -119,7 +119,7 @@ run_spawn() {
     FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
     FM_FAKE_META_PATH="$home/state/$1.meta" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
 
 # Same, but with an explicit FM_TRACE_CONTEXT override, to prove the env decides.
@@ -133,7 +133,7 @@ run_spawn_tc() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
 
 start_trace_session() {
@@ -227,7 +227,7 @@ run_two_level() {
     FM_PROJECTS_OVERRIDE="$sm/projects" FM_CONFIG_OVERRIDE="$sm/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wwt" TMUX="fake,1,0" \
     FM_FAKE_LAUNCH_LOG="$wlog" PATH="$wfake:$PATH" \
-    "$SPAWN" "$worker_id" "$wproj" >/dev/null 2>&1 || true
+    "$SPAWN" "$worker_id" "$wproj" --mode no-mistakes --yolo off >/dev/null 2>&1 || true
 
   TL_WORKER_TP=$(meta_traceparent "$sm/state/$worker_id.meta")
   TL_SM_FILE=absent
@@ -435,20 +435,20 @@ test_session_start_freezes_env_override_and_ignores_later_edits() {
 
 # End-to-end two-level enable path: the primary is enabled by the environment
 # override with NO config file, and that enablement must reach the newly launched
-# secondmate's own worker so the whole chain shares one trace. Before the
-# effective-override fix, the secondmate saw only the (absent) inherited file and
-# left its worker untraced despite receiving the parent carrier.
+# secondmate's own worker. Before the effective-override fix, the secondmate saw
+# only the (absent) inherited file and left its worker untraced despite holding
+# the delivered carrier. Enablement is what propagates; trace identity is not:
+# the worker is a routed task with its own trace boundary, so it must root a
+# fresh trace rather than adopt the Secondmate's carrier from the environment.
 test_secondmate_env_on_file_absent_keeps_nested_worker_enabled() {
   run_two_level enable absent on
   [ "$TL_ENV_TC" = on ] || fail "the primary must deliver FM_TRACE_CONTEXT=on to the secondmate (got '$TL_ENV_TC')"
   fm_trace_context_valid "$TL_CARRIER" || fail "an enabled primary must mint a carrier for the secondmate (got '$TL_CARRIER')"
   fm_trace_context_valid "$TL_WORKER_TP" \
     || fail "env-on/file-absent must keep the nested worker enabled (got '$TL_WORKER_TP')"
-  [ "${TL_CARRIER:3:32}" = "${TL_WORKER_TP:3:32}" ] \
-    || fail "the nested worker must share the primary trace id (parent='${TL_CARRIER:3:32}' worker='${TL_WORKER_TP:3:32}')"
-  [ "${TL_CARRIER:36:16}" != "${TL_WORKER_TP:36:16}" ] \
-    || fail "the nested worker must mint a fresh span id, not reuse the parent's"
-  pass "two-level: env-on/file-absent keeps the nested worker enabled and in the same trace as the primary"
+  [ "${TL_CARRIER:3:32}" != "${TL_WORKER_TP:3:32}" ] \
+    || fail "the nested worker must root its own trace, not adopt the Secondmate's trace id (secondmate='${TL_CARRIER:3:32}' worker='${TL_WORKER_TP:3:32}')"
+  pass "two-level: env-on/file-absent keeps the nested worker enabled, rooting its own per-task trace"
 }
 
 # End-to-end two-level disable path: the primary is disabled by the environment
@@ -465,6 +465,80 @@ test_secondmate_env_off_file_present_keeps_nested_worker_disabled() {
   [ -z "$TL_WORKER_TP" ] \
     || fail "env-off must keep the nested worker disabled even with the file present (got '$TL_WORKER_TP')"
   pass "two-level: env-off/file-present keeps the nested worker disabled even though the config file was copied into the secondmate home"
+}
+
+# The trace boundary is each routed task, not the routing agent: a persistent
+# Secondmate exports one TRACEPARENT into its process environment at its own
+# launch, and later routed requests never replace that environment. Two
+# unrelated tasks spawned sequentially from that one environment must root two
+# distinct traces, and neither may adopt the Secondmate's own trace id, while
+# each task still keeps one stable identity across its own relaunch.
+test_two_routed_tasks_through_one_secondmate_root_distinct_traces() {
+  local base sm fakebin sm_tp out status
+  local id_a id_b proj_a proj_b wt_a wt_b log_a log_b
+  local tp_a tp_b in_a in_b relaunch_tp relaunch_in
+  base="$TMP_ROOT/routed-boundary"
+  sm="$base/sm-home"
+  mkdir -p "$sm/data" "$sm/projects" "$sm/state" "$sm/config"
+  printf 'claude\n' > "$sm/config/crew-harness"
+  : > "$sm/config/trace-context"
+  printf '%s\n' "$$" > "$sm/state/.lock"
+  touch "$sm/state/.last-watcher-beat"
+  start_trace_session "$sm"
+  # The Secondmate's own launch-time carrier: exported once into its pane shell
+  # by the primary's spawn and inherited by every subprocess for the process's
+  # whole life. Fixed here so any adoption of its trace id is unambiguous.
+  sm_tp='00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab-bbbbbbbbbbbbbbbb-01'
+  fakebin=$(make_spawn_fakebin "$base/fake")
+
+  id_a=routed-a-z1
+  id_b=routed-b-z1
+  proj_a="$base/proj-a"; wt_a="$base/wt-a"
+  proj_b="$base/proj-b"; wt_b="$base/wt-b"
+  fm_git_worktree "$proj_a" "$wt_a" wt-routed-a
+  fm_git_worktree "$proj_b" "$wt_b" wt-routed-b
+  mkdir -p "$sm/data/$id_a" "$sm/data/$id_b"
+  printf 'brief a\n' > "$sm/data/$id_a/brief.md"
+  printf 'brief b\n' > "$sm/data/$id_b/brief.md"
+  log_a="$base/launch-a.log"
+  log_b="$base/launch-b.log"
+
+  out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
+  status=$?
+  expect_code 0 "$status" "routed task A spawn should succeed"
+  assert_contains "$out" "spawned $id_a" "routed task A spawn should report success"
+  out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_b" "$fakebin" "$log_b" "$id_b" "$proj_b")
+  status=$?
+  expect_code 0 "$status" "routed task B spawn should succeed"
+  assert_contains "$out" "spawned $id_b" "routed task B spawn should report success"
+
+  tp_a=$(meta_traceparent "$sm/state/$id_a.meta")
+  tp_b=$(meta_traceparent "$sm/state/$id_b.meta")
+  in_a=$(injected_traceparent "$log_a")
+  in_b=$(injected_traceparent "$log_b")
+  fm_trace_context_valid "$tp_a" || fail "routed task A must record a valid carrier (got '$tp_a')"
+  fm_trace_context_valid "$tp_b" || fail "routed task B must record a valid carrier (got '$tp_b')"
+  [ "$in_a" = "$tp_a" ] || fail "task A's injected and recorded carriers must match (injected='$in_a' meta='$tp_a')"
+  [ "$in_b" = "$tp_b" ] || fail "task B's injected and recorded carriers must match (injected='$in_b' meta='$tp_b')"
+  [ "${tp_a:3:32}" != "${sm_tp:3:32}" ] \
+    || fail "routed task A must not adopt the persistent Secondmate's trace id (got '$tp_a')"
+  [ "${tp_b:3:32}" != "${sm_tp:3:32}" ] \
+    || fail "routed task B must not adopt the persistent Secondmate's trace id (got '$tp_b')"
+  [ "${tp_a:3:32}" != "${tp_b:3:32}" ] \
+    || fail "two unrelated routed tasks must root distinct trace ids (A='$tp_a' B='$tp_b')"
+
+  # Same environment, same task: a relaunch must reuse task A's recorded
+  # carrier verbatim, so the per-task boundary never costs recovery identity.
+  out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
+  status=$?
+  expect_code 0 "$status" "routed task A relaunch should succeed"
+  relaunch_tp=$(meta_traceparent "$sm/state/$id_a.meta")
+  relaunch_in=$(injected_traceparent "$log_a")
+  [ "$relaunch_tp" = "$tp_a" ] \
+    || fail "task A's relaunch must keep its original carrier (first='$tp_a' relaunch='$relaunch_tp')"
+  [ "$relaunch_in" = "$tp_a" ] \
+    || fail "task A's relaunch must inject its original carrier (first='$tp_a' injected='$relaunch_in')"
+  pass "two unrelated routed tasks through one persistent Secondmate root distinct traces, adopt nothing from its environment, and keep per-task identity across relaunch"
 }
 
 # Single-frozen-decision guarantee: for a secondmate spawn the recorded/injected
@@ -496,6 +570,7 @@ test_relaunch_reuses_recorded_carrier
 test_session_start_freezes_env_override_and_ignores_later_edits
 test_secondmate_env_on_file_absent_keeps_nested_worker_enabled
 test_secondmate_env_off_file_present_keeps_nested_worker_disabled
+test_two_routed_tasks_through_one_secondmate_root_distinct_traces
 test_secondmate_carrier_and_snapshot_share_one_decision
 
 echo "# all fm-trace-context-spawn tests passed"

@@ -17,10 +17,14 @@
 # observer or instrumentation must explicitly read this env value (or the meta
 # field); this library parents no SDK span by itself.
 #
-# Identity is per TASK, not per spawn: the carrier is minted on the first spawn,
-# adopted as a child (fresh span, same trace) for a nested spawn whose parent
-# already holds one, and REUSED verbatim from the meta on relaunch/recovery, so a
-# task keeps one stable logical identity across restarts.
+# Identity is per TASK, and each task is its own trace boundary: the carrier is
+# minted as a fresh random root on the task's first spawn and REUSED verbatim
+# from the meta on relaunch/recovery, so a task keeps one stable logical
+# identity across restarts. The spawning process's own ambient TRACEPARENT is
+# the agent identity it received at ITS launch, never a parent for new tasks: a
+# persistent supervisor routes many unrelated tasks from one long-lived
+# environment, and adopting its carrier would merge every routed task into one
+# ever-growing trace instead of one trace per task.
 #
 # Usage: . bin/fm-trace-context-lib.sh
 #
@@ -31,15 +35,12 @@
 #   fm_trace_context_session_effective <effective-state-file>
 #     Echoes the normalized frozen decision only when its session binding matches
 #     the current lock, defaulting to off when the state is absent, stale, or invalid.
-#   fm_trace_context_resolve <config-dir> <meta-file> [<inherited-traceparent>]
+#   fm_trace_context_resolve <config-dir> <meta-file>
 #     Echoes the traceparent to inject AND record, or nothing when the
-#     capability is off or when entropy or self-validation fails. A malformed or
-#     all-zero inherited value is NOT an omission: it is treated as absent and a
-#     fresh root is minted (see the root/child rules below). It ALWAYS returns 0:
-#     telemetry is omitted safely and never aborts the spawn. The third argument
-#     defaults to $TRACEPARENT so a nested secondmate or worker spawn continues
-#     its parent's trace; pass an explicit value (including empty) to override,
-#     mainly for tests.
+#     capability is off or when entropy or self-validation fails. It ALWAYS
+#     returns 0: telemetry is omitted safely and never aborts the spawn. The
+#     task's recorded carrier wins so recovery keeps identity; otherwise a
+#     fresh root is minted, never derived from this process's environment.
 #
 # Enablement (see docs/configuration.md for the schema):
 #   config/trace-context   presence flag under the home's config dir enables it.
@@ -60,10 +61,9 @@
 #
 # Wire shape: version 00 only, "00-<32 hex trace>-<16 hex span>-<2 hex flags>",
 # with the trace id and span id never all-zero (W3C rejects both). New roots use
-# RANDOM ids from /dev/urandom. A `01` (sampled) flag on a root records a
+# RANDOM ids from /dev/urandom. The root's `01` (sampled) flag records a
 # sampling DECISION that downstream parent-based samplers honor; it does not
-# guarantee any collector stores a span, and firstmate emits no spans itself. A
-# child preserves the inherited flag verbatim.
+# guarantee any collector stores a span, and firstmate emits no spans itself.
 #
 # Security / trust boundary. This feature adds no OTEL_* variables, no
 # tracestate, no arbitrary environment injection, and no configurable or
@@ -73,26 +73,21 @@
 # guarantee; any resolver failure that returns omits the carrier without aborting
 # the spawn. Carrier-delivery failure also omits telemetry and continues when the
 # backend clears its input; if the backend reports that partial input could not be
-# cleared, fm-spawn refuses to append the launch command. A firstmate-MINTED root
-# is random and reads no prompt, path,
-# task prose, credential, or arbitrary environment key. An INHERITED traceparent,
-# by contrast, is opaque caller-controlled data: its 16-byte trace id and 8-byte
-# span id are up to 24 bytes (48 hex chars) that firstmate accepts after syntax
-# validation WITHOUT interpreting, so whoever set TRACEPARENT in firstmate's
-# environment (a trusted local operator or observer) controls those bytes.
-# Exposure is bounded to that fixed-width carrier - it is not a general content
-# or secret channel, but it is not "structurally impossible to carry data" either.
+# cleared, fm-spawn refuses to append the launch command. Every carrier this lib
+# yields is either a firstmate-MINTED random root that reads no prompt, path,
+# task prose, credential, or arbitrary environment key, or the same task's
+# previously recorded carrier reused verbatim from its own meta. Ambient
+# TRACEPARENT is never read, so no caller-controlled bytes enter a new carrier.
 #
-# Root / child / recovery semantics (never mint an unrelated root by accident):
+# Root / recovery semantics (the trace boundary is each task):
 #   recovery - a valid traceparent already recorded in the meta file is reused
 #              verbatim, so a relaunched or recovered task keeps one stable
 #              identity across restarts.
-#   child    - a valid inherited traceparent contributes its trace id and flags
-#              while a fresh span id is minted, so nested spawns share one trace.
-#   root     - with no valid inherited context a fresh random trace id, fresh
-#              span id, and sampled flags (01) begin a new trace. A malformed or
-#              all-zero inherited value is treated as absent, so garbage never
-#              propagates.
+#   root     - any other spawn mints a fresh random trace id, fresh span id, and
+#              sampled flags (01), beginning a new trace: one per task. The
+#              spawning process's ambient TRACEPARENT is never adopted, so a
+#              persistent supervisor's environment cannot chain its unrelated
+#              routed tasks into one trace.
 
 # Strict W3C traceparent validator: version 00, 32-hex trace id, 16-hex span id,
 # 2-hex flags, with neither id all-zero. The regex lives in a variable because
@@ -197,33 +192,28 @@ fm_trace_context_recorded() {  # <meta-file>
   printf '%s' "${line#traceparent=}"
 }
 
-# Mint a traceparent, adopting a valid parent's trace id and flags when present,
-# otherwise starting a fresh root. Echo nothing and return 1 on entropy or
-# validation failure so the caller can omit telemetry.
-fm_trace_context_mint() {  # <inherited-traceparent-or-empty>
-  local inherited=$1 trace flags span tp
-  if fm_trace_context_valid "$inherited"; then
-    trace=${inherited:3:32}
-    flags=${inherited:53:2}
-  else
-    trace=$(fm_trace_context_hex 16) || return 1
-    flags=01
-  fi
+# Mint a fresh sampled root traceparent. Echo nothing and return 1 on entropy
+# or validation failure so the caller can omit telemetry.
+fm_trace_context_mint() {
+  local trace span tp
+  trace=$(fm_trace_context_hex 16) || return 1
   span=$(fm_trace_context_hex 8) || return 1
-  tp="00-$trace-$span-$flags"
+  tp="00-$trace-$span-01"
   fm_trace_context_valid "$tp" || return 1
   printf '%s' "$tp"
 }
 
 # Public entry point. Echo the single carrier to inject and record, or nothing.
-# Always returns 0 so a spawn is never aborted by a telemetry decision.
-fm_trace_context_resolve() {  # <config-dir> <meta-file> [<inherited-traceparent>]
-  local config_dir=$1 meta=$2 inherited=${3-${TRACEPARENT:-}} existing
+# Always returns 0 so a spawn is never aborted by a telemetry decision. The
+# recorded value wins so recovery keeps one task identity; otherwise a fresh
+# root is minted, never derived from this process's environment.
+fm_trace_context_resolve() {  # <config-dir> <meta-file>
+  local config_dir=$1 meta=$2 existing
   fm_trace_context_enabled "$config_dir" || return 0
   existing=$(fm_trace_context_recorded "$meta")
   if fm_trace_context_valid "$existing"; then
     printf '%s' "$existing"
     return 0
   fi
-  fm_trace_context_mint "$inherited" || return 0
+  fm_trace_context_mint || return 0
 }
