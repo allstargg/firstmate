@@ -1,0 +1,4 @@
+ok - real pi 0.87.1 restores an fm_show_image result through the extension's own renderer
+ok - real herdr 0.9.1 + pi 0.87.1: /image shows its path line and pane reads stay free of graphics bytes
+ok - real pi 0.87.1 draws both images with Kitty transmit-and-display commands in a WezTerm-identified Herdr pane
+ok - real herdr 0.9.1 relays the 240x160 pane image to an attached client as an upload and a placement

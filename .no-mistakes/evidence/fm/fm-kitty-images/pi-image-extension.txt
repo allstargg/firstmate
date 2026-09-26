@@ -1,0 +1,8 @@
+ok - pi image: PNG, JPEG, and WebP files load by signature into bounded PNG display copies
+ok - pi image: display copies are capped in pixels and encoded size
+ok - pi image: links, special files, empty, oversized, damaged, huge, and unsupported inputs are refused
+ok - pi image: relative, home, quoted, and file URL paths resolve to the local file
+ok - pi image: rendering delegates to Pi's Image component and always keeps the path line
+ok - pi image: persisted image views are re-validated before rendering
+ok - pi image: /image records a renderable custom entry and reports refusals without recording
+ok - pi image: fm_show_image returns escape-free text and renders its image from the result details
