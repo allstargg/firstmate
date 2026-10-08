@@ -1,0 +1,17 @@
+## Simulated Stop-hook env: PATH=/usr/bin:/bin, NVM_BIN=/Users/gavin/.nvm/versions/node/v22.23.1/bin (real NVM toolchain)
+
+### BASE (19fcbbd)
+PATH=/usr/bin:/bin
+the claude engine executable was not found on PATH
+node: missing 
+
+### CHANGE (fb03f6e)
+PATH=/Users/gavin/.nvm/versions/node/v22.23.1/bin:/usr/bin:/bin
+engine bin: /Users/gavin/.nvm/versions/node/v22.23.1/bin/claude
+claude --version: 2.1.295 (Claude Code)
+node: /Users/gavin/.nvm/versions/node/v22.23.1/bin/node v22.23.1
+
+### CHANGE, NVM_BIN unset (no fallback; still fails clearly)
+PATH=/usr/bin:/bin
+the claude engine executable was not found on PATH or in the active NVM bin
+node: missing 
